@@ -23,6 +23,23 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       - run: npm test
-      - run: npm publish --access public --provenance
+      # Without the secret this job would fail on every tag and turn the
+      # repository's checks red for a reason that has nothing to do with the
+      # code under test. Skip instead, with a visible notice: publishing is
+      # opt-in, the tag itself is still valid.
+      - name: Check for a publish token
+        id: token
+        run: |
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=npm publish skipped::NPM_TOKEN is not configured; nothing was published. Add the repository secret to enable it."
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: npm publish
+        if: steps.token.outputs.present == 'true'
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
