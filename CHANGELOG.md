@@ -2,6 +2,12 @@
 
 「装备栏」是一个 DeepSeek Harness 插件：给每个对话选一套工具（套装），只把用得上的工具投给模型。
 
+## 0.11.1
+
+- README 与界面同步：功能表不再把**预置套装**当卖点（0.10.2 起界面已隐藏它），改成介绍**我的套装**——新建、设为默认、复制切换命令、编辑（覆盖保存 / 另存为新套装）、备注、删除；并补上 token 账本一行。
+- 安装段改成三种来源并列：npm（`dsh plugin add dsh-loadout`）、GitHub（`add github:JungleYXu/dsh-loadout`）、本地目录链接安装。中英文 README 同步。
+- 无行为变化，只是文档与 npm 首页对齐（npm 页面读的是发布包里的 README）。
+
 ## 0.11.0
 
 首个公开发布版本（npm + awesome-dsh-plugin）。

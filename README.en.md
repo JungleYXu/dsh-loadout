@@ -13,30 +13,32 @@ DeepSeek Harness exposes every tool to every conversation: the more plugins you 
 | Capability | Behaviour |
 | --- | --- |
 | Three bases | `All` (no masking, default) / `Built-in only` / one of your kits |
+| Your kits | Tick built-in tools and plugins under "New kit" and save them as a named loadout. Each card can be set as default, copied as a switch command, edited (overwrite in place, or save as a new kit), annotated, and deleted |
 | Add-ons | Attach a plugin on top of the base for a one-off combination, without saving a kit |
-| Shipped presets | Writing / Research / Coding — read-only; editing saves a copy as your own kit |
 | Notes | Up to 20 characters per kit, shown as `Test 1（for video work）` in the menu |
+| Token ledger | The menu status line says `saves ~1.9k tokens`; Settings shows the full account (tools kept, tokens kept, tokens saved) |
 | Refresh | `⟳` in the menu re-reads the tool catalogue and re-applies the current selection |
 | Per conversation | A switch affects only the current conversation, starting with the next message; new conversations start from the default kit in Settings → Loadout |
 
 ## Install
 
-Let Harness install it, which creates a **link** instead of a copy:
-
-```text
-plugin_manager action=install_bundle target=<absolute path to this directory>
-```
-
-Or from the CLI:
+Three sources, same package:
 
 ```bash
+# 1) npm (published)
+dsh plugin --profile desktop add dsh-loadout
+
+# 2) GitHub (same package, when the registry is unreachable)
+dsh plugin --profile desktop add github:JungleYXu/dsh-loadout
+
+# 3) a local directory (development; installs a link, not a copy)
 dsh plugin --profile desktop add link:<absolute path to this directory>
 ```
 
-Or, once published to npm:
+Letting Harness install it is the same as the third form:
 
-```bash
-dsh plugin --profile desktop add dsh-loadout
+```text
+plugin_manager action=install_bundle target=<absolute path to this directory>
 ```
 
 Restart the app afterwards: host plugins have no hot reload, and the UI needs at least a refresh.
