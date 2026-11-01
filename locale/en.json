@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Loadout",
+    "description": "Group tools into loadouts: switch each conversation between all tools, built-ins only, or a saved loadout, attach extra plugins on the fly, and pick a default for new conversations."
+  }
+}

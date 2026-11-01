@@ -1,0 +1,28 @@
+name: publish
+
+# Publishing lives here rather than in a local shell so the artifact is built
+# from a clean checkout at a tagged commit, and so nobody needs a registry
+# password on their laptop. Enable it by adding an NPM_TOKEN repository secret
+# (an npm automation token for the package owner).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm test
+      - run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

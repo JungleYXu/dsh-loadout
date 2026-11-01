@@ -1,0 +1,14 @@
+# Dependencies are never installed for this plugin: it uses Node builtins only.
+node_modules/
+
+# Local artifacts
+*.zip
+*.tgz
+*.tmp
+*.log
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

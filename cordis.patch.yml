@@ -1,0 +1,69 @@
+# The configuration layer this bundle contributes when a profile lists it.
+#
+# `kits:` here are the shipped *presets* (写作 / 调研 / 编程). They are read-only:
+# the settings page lists them under 预设套装, and editing one forks it into a
+# user kit under `~/.dsh/loadout.json` instead of mutating the preset.
+#
+# User kits are never written back here. They live in `~/.dsh/loadout.json`:
+#   { "kits": [ { name, title, builtins, plugins } ], "defaultKit": "" }
+#
+# `defaultKit: ''` ships neutral: a new conversation starts on 全部 (no tool is
+# masked) until the user picks a default in 设置 → 装备栏. It may name a preset
+# or one of the user's own kits.
+#
+# Every preset carries the same five collaboration tools. Without them a
+# subagent running a preset cannot report back at all: `send_message` is how a
+# child answers its parent, and the rest are how it asks for one. They are
+# orthogonal to the preset's own subject (writing / research / coding), so each
+# list repeats them instead of relying on a YAML anchor the loader may not keep.
+#
+# Override this row from the profile's own cordis.patch.yml to change the
+# shipped presets; the row id is `loadout`.
+- insert:
+    - id: loadout
+      name: dsh-loadout
+      config:
+        defaultKit: ''
+        kits:
+          # 写作 / 调研 / 编程: 内置工具的名字。插件用 `plugins: [id]` 加。
+          - name: writing
+            title: 写作
+            builtins:
+              - read
+              - write
+              - edit
+              - glob
+              - grep
+              - send_message
+              - list_agents
+              - interrupt_agent
+              - subagent
+              - subagent_fork
+          - name: research
+            title: 调研
+            builtins:
+              - web_search
+              - web_fetch
+              - read
+              - glob
+              - grep
+              - send_message
+              - list_agents
+              - interrupt_agent
+              - subagent
+              - subagent_fork
+          - name: coding
+            title: 编程
+            builtins:
+              - pwsh
+              - read
+              - write
+              - edit
+              - glob
+              - grep
+              - todo_write
+              - send_message
+              - list_agents
+              - interrupt_agent
+              - subagent
+              - subagent_fork
