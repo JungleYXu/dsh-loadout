@@ -63,11 +63,11 @@ node scripts/client-smoke.mjs # browser bundle: menu and settings panel render
 
 Settings has no conversation of its own, so it only decides *where new conversations start* — use the header button to change the current one. In the default list, `All` / `Built-in only` and kits are the same kind of card: each can copy its switch command or be set as default. **My kits** starts collapsed and shows only the current default; open it to see the rest. A saved kit can be **edited** on its card: the form opens under that card, and you either overwrite it (conversations already using it switch immediately) or save as a new kit.
 
-### What the shipped presets contain
+### Shipped presets (not shown in the UI, still selectable by command)
 
-> Since 0.10.2 the UI does **not** show the presets (neither the header menu nor Settings). The three entries still live in `cordis.patch.yml` and `/kit writing` keeps working; they are kept for our own testing until they are clear enough to ship to users. The table documents them for review.
+> This section is a **historical record**, not a user-facing feature. Since 0.10.2 neither the header menu nor Settings shows the presets; what users see is `All` / `Built-in only` / `My kits`. The three entries still live in `cordis.patch.yml` and `/kit writing`, `/kit research`, `/kit coding` keep working — they are kept for our own testing until they are clear enough to put back in the UI. The table below is for review and troubleshooting.
 
-All three are read-only; an edit becomes a copy of your own. They list **built-in tools only** — plugin tools come in through add-ons or by saving your own kit.
+The presets are read-only; an edit can only become a copy of your own. They list **built-in tools only** — plugin tools come in through add-ons or by saving your own kit.
 
 | Preset | Built-in tools |
 | --- | --- |
