@@ -40,8 +40,28 @@ jobs:
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # v0.12.5 failed here with TLOG_CREATE_ENTRY_ERROR (409): sigstore's
+      # transparency log already held an equivalent entry, so npm exited non-zero
+      # even though the registry had not accepted the version. Two fallbacks keep
+      # a single bad tlog entry from blocking a release: if the version is in fact
+      # on the registry, treat it as published; otherwise publish once more
+      # without provenance (a different code path, no tlog entry to dedupe).
       - name: npm publish
         if: steps.token.outputs.present == 'true'
-        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -u
+          version="$(node -p "require('./package.json').version")"
+          published() {
+            npm view "dsh-loadout@$version" version >/dev/null 2>&1
+          }
+          if npm publish --access public --provenance; then
+            exit 0
+          fi
+          if published; then
+            echo "::notice title=npm publish had an error after registering::$version is on the registry despite the error above."
+            exit 0
+          fi
+          echo "::warning title=retrying without provenance::publish with provenance failed; retrying once without it."
+          npm publish --access public

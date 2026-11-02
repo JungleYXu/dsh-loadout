@@ -2,6 +2,11 @@
 
 「装备栏」是一个 DeepSeek Harness 插件：给每个对话选一套工具（套装），只把用得上的工具投给模型。
 
+## 0.12.6
+
+- **发布流水线失败的那次补上**：0.12.5 的 `npm publish --provenance` 在 sigstore 里报了 `TLOG_CREATE_ENTRY_ERROR (409) an equivalent entry already exists in the transparency log`——包本身没进 registry（`latest` 仍是 0.12.4），是可信日志去重把这一版挡了下来。`publish.yml` 现在多两层兜底：先看这个版本是不是其实已经到 registry 了（到了就算成功），否则去掉 `--provenance` 再发一次，并留下 warning；正常路径仍然带 provenance。
+- 这一版内容与 0.12.5 相同（只是版本号 + 上面这条流水线兜底）。
+
 ## 0.12.5
 
 - **把开发期探针从发布包里清掉**：`scripts/*-probe.mjs` 六个脚本（agent-probe / agent-lookup-probe / attribution-probe / cmd-probe / dock-probe / slots-probe）都是当时读 `app.asar` 用的一次性工具，里面硬编码了本机绝对路径，却因为 `files: scripts/*.mjs` 一直被塞进 npm 包。现在它们从仓库和包里一起消失，包里只剩三套自检。
