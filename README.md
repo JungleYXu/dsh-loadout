@@ -44,6 +44,8 @@ dsh plugin --profile desktop add link:<本目录绝对路径>
 plugin_manager action=install_bundle target=<本目录绝对路径>
 ```
 
+没有 dsh CLI 的机器上，可以用 `scripts/install.ps1`：它建 junction 链接并写 profile manifest，等价于 `install_bundle`；`-Copy` 会退回拷贝安装，除非你清楚后果，否则别用。
+
 装完重启应用：宿主插件没有热重载，界面至少刷新一次。
 
 ### 为什么不能复制文件
@@ -64,7 +66,7 @@ node scripts/client-smoke.mjs # 浏览器 bundle：菜单与设置页渲染
 - 设置 → 装备栏：管理套装、改备注、选新对话默认套装。
 - `/kit <名字>`：在对话里直接切换。
 
-设置页没有自己的对话，所以它只管「新对话从哪套开始」，不切换当前对话——当前对话请在标题栏里切。默认列表里「全部 / 仅内置」和套装是同一种卡片：都能「复制切换命令」或「设为默认」；「我的套装」默认折叠，只显示当前默认的那一个，点开才列出全部。已经保存的套装可以在卡片上「编辑」：改动就在那张卡片下面展开，「覆盖保存」（正在用它的对话立刻按新工具集走）或「另存为新套装」。
+设置页没有自己的对话，所以它只管「新对话从哪套开始」，不切换当前对话——当前对话请在标题栏里切。默认列表里「全部 / 仅内置」和套装是同一种卡片：都能「复制切换命令」或「设为默认」；「我的套装」默认折叠，只显示当前默认的那一个（这一行下面始终留着「＋ 新建套装」），点开才列出全部。已经保存的套装可以在卡片上「编辑」：改动就在那张卡片下面展开，「覆盖保存」（正在用它的对话立刻按新工具集走）或「另存为新套装」。
 
 ### 预置套装（五套，只读）
 
@@ -101,8 +103,8 @@ node scripts/client-smoke.mjs # 浏览器 bundle：菜单与设置页渲染
 
 ## 升级
 
-- 0.5.x → 0.9.x：包名没变（`dsh-loadout`），直接 `plugin_manager install_bundle` 覆盖即可；套装数据在 `~/.dsh/loadout.json`，不动。
-- 0.4.x → 0.9.x：包名从 `dsh-plugin-kits` 改成 `dsh-loadout`，先卸旧的再装新的：
+- 0.5.x → 0.12.x：包名没变（`dsh-loadout`），直接 `plugin_manager install_bundle` 覆盖即可；套装数据在 `~/.dsh/loadout.json`，第一次启动会迁移到 `schema: 2`（旧文件备份为 `.v1.bak-<时间戳>`）。
+- 0.4.x → 0.12.x：包名从 `dsh-plugin-kits` 改成 `dsh-loadout`，先卸旧的再装新的：
 
   ```text
   plugin_manager action=remove_bundle target=dsh-plugin-kits

@@ -2,8 +2,10 @@ name: publish
 
 # Publishing lives here rather than in a local shell so the artifact is built
 # from a clean checkout at a tagged commit, and so nobody needs a registry
-# password on their laptop. Enable it by adding an NPM_TOKEN repository secret
-# (an npm automation token for the package owner).
+# password on their laptop. Enable it by adding an NPM_TOKEN repository secret:
+# a granular token for the package owner with Read and write permission on
+# this package and Bypass 2FA, because npm no longer issues classic tokens.
+
 on:
   push:
     tags: ['v*']

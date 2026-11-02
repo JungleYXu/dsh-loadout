@@ -1238,7 +1238,7 @@ export function apply(ctx, config = {}) {
     }
     try {
       // A rejected restriction names every global tool it knows about.
-      tools.restrict({ deny: ['__dsh_plugin_kits_probe__'] })
+      tools.restrict({ deny: ['__dsh_loadout_probe__'] })
     } catch (error) {
       const message = String(error instanceof Error ? error.message : error)
       const match = /known global tools: ([^;]+)/u.exec(message)

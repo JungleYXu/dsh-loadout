@@ -43,6 +43,8 @@ Letting Harness install it is the same as the third form:
 plugin_manager action=install_bundle target=<absolute path to this directory>
 ```
 
+Without the dsh CLI you can use `scripts/install.ps1`: it creates the junction link and writes the profile manifest, the same thing `install_bundle` does. Its `-Copy` switch goes back to a copied install — avoid it unless you know why you want one.
+
 Restart the app afterwards: host plugins have no hot reload, and the UI needs at least a refresh.
 
 ### Why not copy the files
@@ -63,7 +65,7 @@ node scripts/client-smoke.mjs # browser bundle: menu and settings panel render
 - **Settings → Loadout**: manage kits, edit notes, choose the new-conversation default.
 - `/kit <name>`: switch from the message box.
 
-Settings has no conversation of its own, so it only decides *where new conversations start* — use the header button to change the current one. In the default list, `All` / `Built-in only` and kits are the same kind of card: each can copy its switch command or be set as default. **My kits** starts collapsed and shows only the current default; open it to see the rest. A saved kit can be **edited** on its card: the form opens under that card, and you either overwrite it (conversations already using it switch immediately) or save as a new kit.
+Settings has no conversation of its own, so it only decides *where new conversations start* — use the header button to change the current one. In the default list, `All` / `Built-in only` and kits are the same kind of card: each can copy its switch command or be set as default. **My kits** starts collapsed and shows only the current default, with the same ＋ New kit action right under it; open it to see the rest. A saved kit can be **edited** on its card: the form opens under that card, and you either overwrite it (conversations already using it switch immediately) or save as a new kit.
 
 ### Shipped presets (five, read-only)
 Five read-only presets. Editing one forks it into one of your kits.
@@ -85,7 +87,7 @@ Five read-only presets. Editing one forks it into one of your kits.
 ## Upgrading
 
 - 0.11.x → 0.12.x: same package name; install over it. The store migrates to `schema: 2` once, with a `loadout.json.v1.bak-<ts>` backup, and every existing conversation is pinned to 全部 so a default change cannot reach back into it.
-- 0.4.x → 0.11.x: the package was renamed from `dsh-plugin-kits`; remove the old one first:
+- 0.4.x → 0.12.x: the package was renamed from `dsh-plugin-kits`; remove the old one first:
 
   ```text
   plugin_manager action=remove_bundle target=dsh-plugin-kits

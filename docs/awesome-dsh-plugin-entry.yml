@@ -3,7 +3,7 @@
 # This file is a copy of what goes into the list's repository as
 #   data/plugins/JungleYXu__dsh-loadout.yml
 # (filename = "<owner>__<repo>.yml"; one file is the whole submission).
-# See RELEASE.md for the PR procedure and the rules it has to satisfy.
+# See docs/RELEASING.md for the PR procedure and the rules it has to satisfy.
 
 url: https://github.com/JungleYXu/dsh-loadout
 name: JungleYXu/dsh-loadout

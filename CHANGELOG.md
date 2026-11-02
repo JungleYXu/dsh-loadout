@@ -2,7 +2,14 @@
 
 「装备栏」是一个 DeepSeek Harness 插件：给每个对话选一套工具（套装），只把用得上的工具投给模型。
 
-## 0.12.4（本地测试版，未发布）
+## 0.12.5
+
+- **把开发期探针从发布包里清掉**：`scripts/*-probe.mjs` 六个脚本（agent-probe / agent-lookup-probe / attribution-probe / cmd-probe / dock-probe / slots-probe）都是当时读 `app.asar` 用的一次性工具，里面硬编码了本机绝对路径，却因为 `files: scripts/*.mjs` 一直被塞进 npm 包。现在它们从仓库和包里一起消失，包里只剩三套自检。
+- 市场条目的注释指向 `docs/RELEASING.md`（原来指向已删除的 `RELEASE.md`）。
+- `publish.yml` 的说明改成事实：npm 已不发经典 token，需要 granular token + Bypass 2FA。
+- `index.js` 里那个用来让 `restrict()` 报错的哨兵工具名从 `__dsh_plugin_kits_probe__` 改成 `__dsh_loadout_probe__`（旧包名残留，纯内部字符串，无行为变化）。
+- README 补一句 `scripts/install.ps1` 的定位：没有 `dsh` CLI 时的链接安装，等价于 `install_bundle`。
+## 0.12.4
 
 - **重名当场说清楚**：新建/编辑套装时，输入框下方直接给出原因——「「仅聊天」是预置套装（标识 chat），不能用这个名字」，或是「已经有叫「我的套」的套装了」。占用时保存按钮置灰，不用等提交后才失败。
 - 说明重名判定：名字先 trim + NFKC + 转小写，然后同时比对**自建套装的 name 与 title**、**预置套装的 name（稳定标识）与 title（界面显示）**、以及保留字（全部 / 仅内置 / all / default…）。所以预置显示「仅聊天」时，chat 依然被占用——chat 是它的标识。
