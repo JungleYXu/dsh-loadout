@@ -179,11 +179,13 @@ const fixture = {
   ok: true,
   source: 'C:/fake/.dsh/loadout.json',
   presets: [
+    { name: 'chat', title: '仅聊天', allow: ['ask_user_question', 'web_search', 'read'] },
+    { name: 'coding', title: '编程用', allow: ['pwsh', 'read'] },
+    { name: 'research', title: '查找资料', allow: ['web_search', 'web_fetch'] },
+    { name: 'plan', title: '项目梳理', allow: ['read', 'write', 'todo_write'] },
     { name: 'writing', title: '写作', allow: ['read', 'write', 'edit'] },
-    { name: 'research', title: '调研', allow: ['web_search', 'web_fetch'] },
-    { name: 'coding', title: '编程', allow: ['pwsh', 'read'] },
   ],
-  presetNames: ['writing', 'research', 'coding'],
+  presetNames: ['chat', 'coding', 'research', 'plan', 'writing'],
   kits: [
     { name: 'mine', title: '我的套', note: '用于视频制作', builtins: ['read'], plugins: [], allow: ['read'], description: '内置 1 个', tokens: 860, isDefault: true },
     { name: 'other', title: '另一套', builtins: ['write'], plugins: [], allow: ['write'], description: '内置 1 个', tokens: 420, isDefault: false },
@@ -246,7 +248,7 @@ if (menu !== undefined) {
   check('我的套装 counts user kits only', allText.includes('我的套装（2）'), allText.slice(0, 400))
   // Presets are back from 0.12: they are the quickest way to start a known kind
   // of work, they stay read-only, and each one now says what it leaves out.
-  check('menu lists the presets again', allText.includes('预设套装（3）') && allText.includes('写作'), allText.slice(0, 400))
+  check('menu lists the presets again', allText.includes('预设套装（5）') && allText.includes('写作') && allText.includes('仅聊天'), allText.slice(0, 400))
   check('加挂 counts extras', allText.includes('加挂（1）'), allText.slice(0, 400))
   check('footer text is the approved sentence', allText.includes(FOOTER))
   check('the menu shows the note with the kit name', allText.includes('我的套（用于视频制作）'), allText.slice(0, 400))
@@ -320,7 +322,7 @@ try {
 try {
   const panel = expand(registration.component({ preview: { data: fixture, openSections: { presets: true, kits: true } } }))
   const panelText = textOf(panel)
-  check('settings lists the presets again', panelText.includes('预设套装 · 只读（3）') && panelText.includes('写作'), panelText.slice(0, 400))
+  check('settings lists the presets again', panelText.includes('预设套装 · 只读（5）') && panelText.includes('写作') && panelText.includes('项目梳理'), panelText.slice(0, 400))
   check('settings lists my kits', panelText.includes('我的套装'), panelText.slice(0, 400))
   check('settings picks a default kit', panelText.includes('新对话默认套装') && panelText.includes('仅内置'), panelText.slice(0, 400))
   check('a note rides next to the kit name', panelText.includes('我的套（用于视频制作）'), panelText.slice(0, 400))
@@ -335,7 +337,7 @@ try {
   const copyButtons = nodesIn(panel, (node) => node.type === 'button' && textOf(node) === '复制切换命令')
   const defaultButtons = nodesIn(panel, (node) => node.type === 'button' && textOf(node) === '设为默认')
   // 2 defaults + 3 presets + 2 user kits — every card carries both actions.
-  check('全部 and 仅内置 are cards with the two actions', copyButtons.length === 7 && defaultButtons.length === 7, `${copyButtons.length}/${defaultButtons.length}`)
+  check('全部 and 仅内置 are cards with the two actions', copyButtons.length === 9 && defaultButtons.length === 9, `${copyButtons.length}/${defaultButtons.length}`)
   check('preset cards no longer offer save-as', !panelText.includes('另存为我的套装'), panelText.slice(0, 400))
   const editButtons = nodesIn(panel, (node) => node.type === 'button' && textOf(node) === '编辑')
   check('settings offers an edit action for saved kits', editButtons.length === 2, `${editButtons.length} · 编辑`)

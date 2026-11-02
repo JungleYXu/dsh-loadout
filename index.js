@@ -1516,7 +1516,7 @@ export function apply(ctx, config = {}) {
         throw new Error('至少要选一个内置工具或一个插件，否则这个包等于"全部"')
       }
       if (oldName !== kit.name) {
-        for (const [agent, entry] of state) {
+        for (const [agent, entry] of [...state]) {
           if (entry.selection.base === BASE_KIT && entry.selection.kit === oldName) {
             entry.selection = { ...entry.selection, kit: kit.name }
             entry.label = labelOf(agent, entry.selection)
@@ -1526,7 +1526,11 @@ export function apply(ctx, config = {}) {
       // Editing the tools of the kit a conversation is running has to change that
       // conversation now: a saved edit that only takes effect after the next
       // switch reads as "the edit did nothing".
-      for (const [agent, entry] of state) {
+      //
+      // Iterate a snapshot: `useSelection` deletes and re-adds the agent's entry,
+      // and a Map iterator that is handed back an entry it already passed never
+      // finishes (that is a hang, not a slow loop).
+      for (const [agent, entry] of [...state]) {
         if (entry.selection.base === BASE_KIT && entry.selection.kit === kit.name) {
           useSelection(agent, { base: BASE_KIT, kit: kit.name, extras: [...entry.selection.extras] })
         }
@@ -1553,7 +1557,9 @@ export function apply(ctx, config = {}) {
       for (const [sessionId, value] of Object.entries(book.assignments)) {
         if (value === kit.name) book.assignments[sessionId] = null
       }
-      for (const [agent, entry] of state) {
+      // Snapshot for the same reason as `update`: each `useSelection` rewrites the
+      // map entry it belongs to.
+      for (const [agent, entry] of [...state]) {
         if (entry.selection.base === BASE_KIT && entry.selection.kit === kit.name) {
           useSelection(agent, emptySelection())
         }

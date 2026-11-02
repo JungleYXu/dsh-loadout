@@ -151,13 +151,50 @@ function childFor(dependencies, built, commands, routes) {
   return child
 }
 
+const COLLAB = ['send_message', 'list_agents', 'interrupt_agent', 'subagent', 'subagent_fork']
+
+// The coding preset restricted to what the fake runtime actually exposes: the
+// collaboration five are listed by the real preset, but this fake agent only owns
+// subagent from that group, and a tool it cannot see can never survive a mask.
+const CODING_KEPT = ['pwsh', 'read', 'write', 'edit', 'glob', 'grep', 'todo_write', 'subagent', ...OWN_TOOLS]
+
+// Mirrors the presets in `cordis.patch.yml` (the host hands this same shape to
+// `apply`). The last check in this block keeps the two lists from drifting.
 const config = {
   defaultKit: 'writing',
   kits: [
-    { name: 'writing', title: '写作', builtins: ['read', 'write', 'edit'] },
-    { name: 'research', title: '调研', builtins: ['web_search', 'web_fetch'] },
-    { name: 'coding', title: '编程', builtins: ['pwsh', 'read'] },
-  ],
+    {
+      name: 'chat',
+      title: '仅聊天',
+      builtins: ['ask_user_question', 'weather', 'web_search', 'web_fetch', 'read'],
+    },
+    { name: 'coding', title: '编程用', builtins: ['pwsh', 'read', 'write', 'edit', 'glob', 'grep', 'todo_write'] },
+    {
+      name: 'research',
+      title: '查找资料',
+      builtins: ['web_search', 'web_fetch', 'advanced_search', 'research', 'platform_search', 'read', 'write', 'glob', 'grep'],
+    },
+    {
+      name: 'plan',
+      title: '项目梳理',
+      builtins: ['ask_user_question', 'web_search', 'web_fetch', 'read', 'write', 'edit', 'glob', 'grep', 'todo_write'],
+    },
+    { name: 'writing', title: '写作', builtins: ['read', 'write', 'edit', 'glob', 'grep'] },
+  ].map((preset) => ({
+    ...preset,
+    // Every preset carries the collaboration five, or a subagent running it
+    // cannot answer its parent at all.
+    builtins: [...preset.builtins, 'send_message', 'list_agents', 'interrupt_agent', 'subagent', 'subagent_fork'],
+  })),
+}
+
+// The five preset ids must exist in the shipped patch too — the test's copy above
+// is hand-written, and a rename in one place without the other is silent drift.
+{
+  const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+  const missing = config.kits.filter((preset) => !new RegExp(`name:\\s*${preset.name}\\b`).test(patch))
+  check('the shipped patch carries every preset the tests use',
+    missing.length === 0, missing.map((preset) => preset.name).join(','))
 }
 
 const ctx = makeCtx()
@@ -345,7 +382,7 @@ let listed = await run('kit_list', {}, agent)
 check('kit_list active title', listed.active === '写作', listed.active)
 check('kit_list base is kit', listed.base === 'kit', listed.base)
 check('kit_list prefers the shipped config', listed.source === 'bundle 配置', listed.source)
-check('kit_list has three presets', listed.presets.length === 3, String(listed.presets.length))
+check('kit_list lists the five shipped presets', listed.presets.length === 5, String(listed.presets.length))
 check('kit_list has no user kit yet', listed.kits.length === 0, String(listed.kits.length))
 // The host validates execute() output against the declared schema, so a field
 // that is returned but not declared fails the whole call at runtime
@@ -360,12 +397,12 @@ check('kit_list has no user kit yet', listed.kits.length === 0, String(listed.ki
 }
 
 // ---- kit_apply by title ------------------------------------------------------
-const appliedKit = await run('kit_apply', { kit: '编程' }, agent)
+const appliedKit = await run('kit_apply', { kit: '编程用' }, agent)
 check('kit_apply by title', appliedKit.kit === 'coding', appliedKit.kit)
 check('previous restriction released', agent.filters[0].active === false)
 check(
   'preset keeps exactly its built-ins plus own tools',
-  sameSet(keptOf(agent), ['pwsh', 'read', ...OWN_TOOLS]),
+  sameSet(keptOf(agent), CODING_KEPT),
   keptOf(agent).join(','),
 )
 
@@ -380,7 +417,7 @@ check('unknown kit throws', unknownError.includes('未知套装'), unknownError)
 // ---- GET /state exposes the whole model -------------------------------------
 let state = await getState()
 check('state route 200', state.status === 200, String(state.status))
-check('state lists presets with names', JSON.stringify(state.body.presetNames) === JSON.stringify(['writing', 'research', 'coding']), JSON.stringify(state.body.presetNames))
+check('state lists presets with names', JSON.stringify(state.body.presetNames) === JSON.stringify(['chat', 'coding', 'research', 'plan', 'writing']), JSON.stringify(state.body.presetNames))
 check('state lists preset allow', Array.isArray(state.body.presets) && state.body.presets[0].allow.includes('read'), JSON.stringify(state.body.presets?.[0]))
 check('state splits the catalog', Array.isArray(state.body.catalog.builtins) && Array.isArray(state.body.catalog.plugins), JSON.stringify(state.body.catalog))
 check(
@@ -433,7 +470,7 @@ check('presets carry a token estimate', Number.isFinite(answer.body.presets[0].t
 answer = await post({ action: 'applyBase', sessionId: SESSION_ID, base: 'kit', kit: 'coding' })
 const kitKept = keptOf(agent)
 check('applyBase kit 200', answer.status === 200, JSON.stringify(answer.body))
-check('kit keeps only its built-ins', sameSet(kitKept, ['pwsh', 'read', ...OWN_TOOLS]), kitKept.join(','))
+check('kit keeps only its built-ins', sameSet(kitKept, CODING_KEPT), kitKept.join(','))
 check('kit masks plugin tools', !kitKept.includes('demo_search'), kitKept.join(','))
 
 let badBase = await post({ action: 'applyBase', sessionId: SESSION_ID, base: 'kit', kit: 'ghost' })
@@ -678,7 +715,7 @@ check('GET answers for the Session it names', firstView.body.selection.kit === '
 check('GET answers for a different Session', secondView.body.selection.kit === 'research', JSON.stringify(secondView.body.selection))
 check(
   'two Sessions do not leak into each other',
-  firstView.body.label === '编程' && secondView.body.label === '调研',
+  firstView.body.label === '编程用' && secondView.body.label === '查找资料',
   JSON.stringify([firstView.body.label, secondView.body.label]),
 )
 
@@ -784,6 +821,84 @@ try {
   reservedError = String(error?.message ?? error)
 }
 check('a reserved name is refused', /全部/u.test(reservedError ?? ''), reservedError)
+
+// T18: the same name with different case or surrounding space is the same kit.
+let caseDupError
+await ctxV2.registered.get('kit_create').execute(
+  { name: 'qa', title: '问答', builtins: ['read'], plugins: [] }, exec(agentB))
+try {
+  await ctxV2.registered.get('kit_create').execute(
+    { name: ' QA ', title: '重复', builtins: ['read'], plugins: [] }, exec(agentB))
+} catch (error) {
+  caseDupError = String(error?.message ?? error)
+}
+check('a name that differs only by case or space is refused',
+  /已存在/u.test(caseDupError ?? ''), caseDupError)
+
+// T24: a user kit may not shadow a shipped preset.
+let presetClashError
+try {
+  await ctxV2.registered.get('kit_create').execute(
+    { name: 'chat', title: '冒充预置', builtins: ['read'], plugins: [] }, exec(agentB))
+} catch (error) {
+  presetClashError = String(error?.message ?? error)
+}
+check('a preset name cannot be taken by a user kit',
+  /预置/u.test(presetClashError ?? ''), presetClashError)
+
+// T03/T05: the default changes again; conversations that already answered keep theirs.
+const agentC = makeAgent(undefined, { id: 'session-c' })
+await ctxV2.registered.get('kit_set_default').execute({ name: 'chat' }, exec(agentB))
+fireCreated(agentC)
+check('changing the default twice keeps earlier conversations',
+  storeOf().assignments['session-a'] === null && storeOf().assignments['session-c'] === 'chat',
+  JSON.stringify(storeOf().assignments))
+
+// T08: deleting a kit reports and releases every conversation that held it.
+await ctxV2.registered.get('kit_create').execute(
+  { name: 'shared', title: '共享', builtins: ['read'], plugins: [] }, exec(agentB))
+for (const id of ['session-a', 'session-b', 'session-c']) {
+  await ctxV2.registered.get('kit_assign').execute({ sessionId: id, kit: 'shared' }, exec(agentB))
+}
+const sharedDelete = await ctxV2.registered.get('kit_delete').execute({ name: 'shared' }, exec(agentB))
+check('deleting a kit reports every conversation it held',
+  sharedDelete.affectedSessions === 3
+    && ['session-a', 'session-b', 'session-c'].every((id) => storeOf().assignments[id] === null),
+  JSON.stringify({ sharedDelete, assignments: storeOf().assignments }))
+
+// T09: deleting the default kit also clears the default.
+await ctxV2.registered.get('kit_create').execute(
+  { name: 'shared-two', title: '共享二', builtins: ['read'], plugins: [] }, exec(agentB))
+await ctxV2.registered.get('kit_set_default').execute({ name: 'shared-two' }, exec(agentB))
+await ctxV2.registered.get('kit_assign').execute({ sessionId: 'session-a', kit: 'shared-two' }, exec(agentB))
+const defaultDelete = await ctxV2.registered.get('kit_delete').execute({ name: 'shared-two' }, exec(agentB))
+check('deleting the default kit clears the default',
+  defaultDelete.affectedSessions === 1
+    && (storeOf().defaultKit === null || storeOf().defaultKit === ''),
+  JSON.stringify({ defaultDelete, defaultKit: storeOf().defaultKit }))
+
+// T10: renaming changes the display name only; bindings point at the stable id.
+await ctxV2.registered.get('kit_create').execute(
+  { name: 'stable', title: '稳定', builtins: ['read'], plugins: [] }, exec(agentB))
+await ctxV2.registered.get('kit_assign').execute({ sessionId: 'session-b', kit: 'stable' }, exec(agentB))
+await ctxV2.registered.get('kit_rename').execute({ name: 'stable', title: '稳定改名' }, exec(agentB))
+check('renaming a bound kit keeps the binding',
+  storeOf().assignments['session-b'] === 'stable'
+    && storeOf().kits.some((kit) => kit.name === 'stable' && kit.title === '稳定改名'),
+  JSON.stringify(storeOf().kits.map((kit) => [kit.name, kit.title])))
+
+// T15: every write is a complete file — the temporary one never survives.
+check('the store write leaves no temporary file',
+  !existsSync(join(v2Home, '.dsh', 'loadout.json.tmp')), 'loadout.json.tmp is still there')
+
+// T25: a shipped preset can be the new-conversation default too.
+await ctxV2.registered.get('kit_set_default').execute({ name: 'plan' }, exec(agentB))
+const agentD = makeAgent(undefined, { id: 'session-d' })
+fireCreated(agentD)
+check('a preset can be the default',
+  storeOf().assignments['session-d'] === 'plan'
+    && keptOf(agentD).includes('read') && !keptOf(agentD).includes('pwsh'),
+  JSON.stringify({ binding: storeOf().assignments['session-d'], kept: keptOf(agentD) }))
 
 process.env.USERPROFILE = savedHomeV2
 process.env.HOME = savedHomeV2b
