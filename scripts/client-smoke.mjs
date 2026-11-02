@@ -233,6 +233,8 @@ if (menuDefault !== undefined) {
   check('presets start collapsed', !flat.includes('写作'), flat.slice(0, 400))
   check('user kits start collapsed', !flat.includes('另一套'), flat.slice(0, 400))
   check('the active kit is the only kit row while collapsed', flat.includes('我的套（用于视频制作）'), flat.slice(0, 400))
+  // Creating a kit must not need a click on the group head first.
+  check('the new-kit row is visible while my kits are collapsed', flat.includes('＋ 新建套装'), flat.slice(0, 400))
   check('applied plugins start collapsed', !flat.includes('alpha 插件'), flat.slice(0, 400))
   check('applied plugins collapse into one summary row', flat.includes('已应用 1 个插件'), flat.slice(0, 400))
   check('menu opens with a status line', flat.includes('当前：我的套') && flat.includes('加挂 1'), flat.slice(0, 200))
@@ -359,9 +361,28 @@ try {
   const presetExpandedText = textOf(presetExpanded)
   check('only the default preset carries the default tag',
     presetExpandedText.includes('仅聊天') && presetExpandedText.includes('默认'), presetExpandedText.slice(0, 400))
+  // 「＋ 新建套装」 is the only row that creates something; it must read as an
+  // action (blue, tinted), not as another selectable kit.
+  const menuWithKits = expand(header.component({ sessionId: 'session-1', preview: { data: fixture, open: true, groups: { kits: true, presets: false, extras: false } } }))
+  const newKit = nodesIn(menuWithKits, (node) => node.props?.role === 'menuitem' && node.props?.style?.color === '#2563eb' && textOf(node).includes('＋ 新建套装'))
+  check('the new-kit row is highlighted as an action', newKit.length === 1, String(newKit.length))
   const renameButtons = nodesIn(panel, (node) => node.type === 'button' && textOf(node) === '重命名')
   // Renaming moved into 编辑: one editor for name, note and tools on the card.
   check('renaming lives inside 编辑 rather than its own button', renameButtons.length === 0 && editButtons.length === 2, `${renameButtons.length} · 重命名 / ${editButtons.length} · 编辑`)
+
+  // A name the host would refuse is explained where the user typed it: a preset's
+  // `name` is a private id (`chat`), so "chat" looks free and is not.
+  const clashPanel = expand(registration.component({
+    preview: { data: fixture, draft: { name: 'chat', note: '', builtins: ['read'], plugins: [] } },
+  }))
+  const clashText = textOf(clashPanel)
+  check('a name taken by a preset is explained inline',
+    clashText.includes('是预置套装') && clashText.includes('仅聊天'), clashText.slice(0, 600))
+  const clashKitPanel = expand(registration.component({
+    preview: { data: fixture, draft: { name: '我的套', note: '', builtins: ['read'], plugins: [] } },
+  }))
+  check('a name taken by my own kit is explained inline',
+    textOf(clashKitPanel).includes('已经有叫「我的套」的套装了'), textOf(clashKitPanel).slice(0, 600))
 } catch (error) {
   failures.push(`panel render threw: ${error instanceof Error ? error.message : String(error)}`)
 }

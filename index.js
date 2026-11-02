@@ -98,7 +98,8 @@ function assertKitName(raw, presets) {
   if (NAME_FORBIDDEN.test(value)) throw new Error('名字里不能有 / \\ : * ? " < > | 或控制字符')
   const lower = value.toLowerCase()
   if (RESERVED_NAMES.includes(lower)) throw new Error(`"${value}" 是保留名字，请换一个名字`)
-  if (presets !== undefined && findKit(presets, value) !== undefined) throw new Error(`"${value}" 与预置套装同名，请换一个名字`)
+  const preset = presets === undefined ? undefined : findKit(presets, value)
+  if (preset !== undefined) throw new Error(`「${preset.title}」是预置套装（标识 ${preset.name}），不能占用这个名字`)
   return value
 }
 

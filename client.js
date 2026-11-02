@@ -47,6 +47,28 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Why a name cannot be saved, in the user's terms. The host compares a kit
+     * against preset *ids* as well as titles (a preset's `name` is a stable id —
+     * `chat` — while the UI shows its title, 仅聊天), so "chat" is refused even
+     * though it "looks different". Return '' when the name is free.
+     */
+    function nameClash(raw, presets, kits, ignore) {
+      const value = String(raw ?? '').trim().toLowerCase()
+      if (value === '') return ''
+      const preset = (presets ?? []).find((item) =>
+        String(item.name ?? '').toLowerCase() === value || String(item.title ?? '').toLowerCase() === value)
+      if (preset !== undefined) {
+        return `「${preset.title}」是预置套装（标识 ${preset.name}），不能用这个名字，换一个吧`
+      }
+      const kit = (kits ?? []).find((item) =>
+        String(item.name ?? '').toLowerCase() === value || String(item.title ?? '').toLowerCase() === value)
+      if (kit !== undefined && kit.name !== ignore) {
+        return `已经有叫「${kit.title ?? kit.name}」的套装了，换一个名字，或者进去编辑它`
+      }
+      return ''
+    }
+
+    /**
      * Presets (仅聊天 / 编程用 / 查找资料 / 项目梳理 / 写作) are shown again from
      * 0.12: they are the fastest way to start a conversation of a known kind,
      * and each one now lists what it leaves out instead of silently dropping
@@ -133,6 +155,10 @@ window.__ModuleLoader__.load({
       },
       rowHover: { background: 'rgba(59,130,246,.08)' },
       rowActive: { background: 'rgba(59,130,246,.10)' },
+      // The one row that creates something, not selects something: keep it
+      // blue and tinted so it reads as an action at a glance.
+      rowPrimary: { color: '#2563eb', background: 'rgba(37,99,235,.07)', fontWeight: 600 },
+      rowPrimaryHover: { background: 'rgba(37,99,235,.14)' },
       rowDisabled: { opacity: 0.45, cursor: 'default' },
       indent: { paddingLeft: 26 },
       mark: { width: 12, flex: 'none', color: '#2563eb', fontSize: 12, textAlign: 'center' },
@@ -273,7 +299,8 @@ window.__ModuleLoader__.load({
         ...styles.row,
         ...(props.indent === true ? styles.indent : null),
         ...(props.active === true ? styles.rowActive : null),
-        ...(hover && !disabled ? styles.rowHover : null),
+        ...(props.tone === 'primary' ? styles.rowPrimary : null),
+        ...(hover && !disabled ? (props.tone === 'primary' ? styles.rowPrimaryHover : styles.rowHover) : null),
         ...(disabled ? styles.rowDisabled : null),
       }
       const activate = () => {
@@ -295,7 +322,7 @@ window.__ModuleLoader__.load({
         },
       },
       h('span', { style: styles.mark }, props.active === true ? '✓' : ''),
-      h('span', { style: styles.rowTitle },
+      h('span', { style: { ...styles.rowTitle, ...(props.tone === 'primary' ? { color: '#2563eb' } : null) } },
         props.tip === undefined
           ? h('span', null, props.label)
           : h(Tip, { text: props.tip }, h('span', null, props.label))),
@@ -337,7 +364,7 @@ window.__ModuleLoader__.load({
     function Builder(props) {
       const {
         catalog, draft, onChange, busy, onCancel, onSave, saveLabel,
-        title, onSaveAs, saveAsLabel, nameField, namePlaceholder,
+        title, onSaveAs, saveAsLabel, nameField, namePlaceholder, clash,
       } = props
       // Both lists start collapsed: the builder opens with a name field and a
       // summary, not with forty checkboxes.
@@ -368,6 +395,12 @@ window.__ModuleLoader__.load({
           value: draft[nameField ?? 'name'] ?? '',
           onChange: (event) => onChange({ ...draft, [nameField ?? 'name']: event.target.value }),
         }),
+        // The host rejects a name that a preset or another kit already uses;
+        // saying so *here* keeps the user from staring at a save button that
+        // silently does nothing.
+        typeof clash === 'string' && clash !== ''
+          ? h('div', { style: { ...styles.error, marginTop: 4 } }, clash)
+          : null,
         h('input', {
           style: { ...styles.input, marginTop: 6 },
           placeholder: `备注（可选，最多 ${NOTE_MAX} 字），例如 用于视频制作`,
@@ -413,7 +446,12 @@ window.__ModuleLoader__.load({
           onSaveAs === undefined
             ? null
             : h('button', { type: 'button', style: styles.ghost, disabled: busy, onClick: onSaveAs }, saveAsLabel ?? '另存为新套装'),
-          h('button', { type: 'button', style: styles.primary, disabled: busy, onClick: onSave }, saveLabel ?? '保存')))
+          h('button', {
+            type: 'button',
+            style: { ...styles.primary, ...(typeof clash === 'string' && clash !== '' ? { opacity: 0.5 } : null) },
+            disabled: busy || (typeof clash === 'string' && clash !== ''),
+            onClick: onSave,
+          }, saveLabel ?? '保存')))
     }
 
     // ---- the header control -------------------------------------------------
@@ -429,7 +467,7 @@ window.__ModuleLoader__.load({
       // collapsed group still shows the one active row, and clicking the head is
       // how you go browsing.
       const [groups, setGroups] = useState(preview?.groups ?? { kits: false, presets: false, extras: false, applied: false })
-      const [builder, setBuilder] = useState(null)
+      const [builder, setBuilder] = useState(preview?.builder ?? null)
       const [saveAs, setSaveAs] = useState(false)
       const [saveName, setSaveName] = useState('')
       const [saveNote, setSaveNote] = useState('')
@@ -696,9 +734,10 @@ window.__ModuleLoader__.load({
           tip: '你自己保存的套装。点一下即可切换。',
           onToggle: () => setGroups({ ...groups, kits: !groups.kits }),
         }),
-        // A collapsed group shows exactly one row: the set that is on. Everything
-        // else waits for a click on the head.
+        // A collapsed group shows the set that is on, plus the one action that
+        // creates a set — so "new kit" never needs a click on the head first.
         activeUserKit === undefined ? null : h(MenuRow, {
+          key: 'active-kit',
           label: kitLabel(activeUserKit),
           hint: activeUserKit.isDefault ? '默认' : '',
           active: true,
@@ -706,27 +745,31 @@ window.__ModuleLoader__.load({
           onClick: () => run({ action: 'applyBase', base: 'kit', kit: activeUserKit.name }),
         }),
         groups.kits === true
-          ? h('div', null,
-            ...kits
-              .filter((kit) => activeUserKit === undefined || kit.name !== activeUserKit.name)
-              .map((kit) => h(MenuRow, {
-                key: kit.name,
-                label: kitLabel(kit),
-                hint: kit.isDefault ? '默认' : '',
-                indent: true,
-                onClick: () => {
-                  run({ action: 'applyBase', base: 'kit', kit: kit.name })
-                  // Picking one puts the list away again; the row that stays is the
-                  // one just chosen, right under the group head.
-                  setGroups({ ...groups, kits: false })
-                },
-              })),
-            h(MenuRow, {
-              label: '＋ 新建套装',
+          ? kits
+            .filter((kit) => activeUserKit === undefined || kit.name !== activeUserKit.name)
+            .map((kit) => h(MenuRow, {
+              key: kit.name,
+              label: kitLabel(kit),
+              hint: kit.isDefault ? '默认' : '',
               indent: true,
-              onClick: () => openBuilder({ builtins: allBuiltins, plugins: [] }),
+              onClick: () => {
+                run({ action: 'applyBase', base: 'kit', kit: kit.name })
+                // Picking one puts the list away again; the row that stays is the
+                // one just chosen, right under the group head.
+                setGroups({ ...groups, kits: false })
+              },
             }))
           : null,
+        // Always last inside 我的套装, open or collapsed: the create action sits
+        // where the eye ends up after scanning the kits.
+        h(MenuRow, {
+          key: 'new-kit',
+          label: '＋ 新建套装',
+          tone: 'primary',
+          hint: '从零配一套',
+          indent: true,
+          onClick: () => openBuilder({ builtins: allBuiltins, plugins: [] }),
+        }),
         SHOW_PRESETS === true
           ? h(GroupHead, {
             title: '预设套装',
@@ -850,6 +893,7 @@ window.__ModuleLoader__.load({
           onCancel: () => setBuilder(null),
           onSave: saveBuilder,
           saveLabel: '保存并启用',
+          clash: nameClash(builder.name, presets, kits, null),
         })
 
       return h('div', { style: styles.wrap, ref: box },
@@ -954,7 +998,7 @@ window.__ModuleLoader__.load({
       const [data, setData] = useState(preview?.data ?? null)
       const [busy, setBusy] = useState(false)
       const [message, setMessage] = useState('')
-      const [draft, setDraft] = useState(null)
+      const [draft, setDraft] = useState(preview?.draft ?? null)
       // Editing a saved kit reuses the same builder as creating one; only the
       // action buttons differ (覆盖保存 keeps the name, 另存为新套装 mints a new one).
       const [editingKit, setEditingKit] = useState(null)
@@ -1146,6 +1190,7 @@ window.__ModuleLoader__.load({
               onCancel: () => setDraft(null),
               onSave: saveDraft,
               saveLabel: '保存',
+              clash: nameClash(draft.name, presets, kits, null),
             })),
         message === '' ? null : h('div', { style: styles.error }, message),
         h('div', { style: styles.ledger },
@@ -1296,6 +1341,7 @@ window.__ModuleLoader__.load({
                       },
                       onSave: saveOverwrite,
                       saveLabel: '覆盖保存',
+                      clash: nameClash(draft.title, presets, kits, editingKit),
                       onSaveAs: saveEditingAsNew,
                       saveAsLabel: '另存为新套装',
                     }))
