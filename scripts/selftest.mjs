@@ -922,6 +922,38 @@ process.env.USERPROFILE = savedHomeV2
 process.env.HOME = savedHomeV2b
 rmSync(v2Home, { recursive: true, force: true })
 
+// ---- a user kit that shadows a preset is renamed, never deleted ------------
+// Stores written before the preset list existed can carry `chat` / `plan`, which
+// `resolveKit` prefers over the preset of the same name — the settings page then
+// showed two rows as 默认. The upgrade renames the user's kit and repoints every
+// binding that used it.
+const clashHome = join(tmpdir(), `loadout-clash-${process.pid}`)
+rmSync(clashHome, { recursive: true, force: true })
+mkdirSync(join(clashHome, '.dsh', 'sessions', 'ws', 'session-clash'), { recursive: true })
+process.env.USERPROFILE = clashHome
+process.env.HOME = clashHome
+writeFileSync(join(clashHome, '.dsh', 'loadout.json'), JSON.stringify({
+  schema: 2,
+  kits: [{ name: 'chat', title: '聊天', builtins: ['read'], plugins: [] }],
+  defaultKit: 'chat',
+  assignments: { 'session-clash': 'chat' },
+  migratedAt: new Date().toISOString(),
+}), 'utf8')
+const clash = await import('../index.js?clash=1')
+const ctxClash = makeCtx()
+clash.apply(ctxClash, { defaultKit: '', kits: config.kits })
+const clashStore = JSON.parse(readFileSync(join(clashHome, '.dsh', 'loadout.json'), 'utf8'))
+check('a user kit shadowing a preset is renamed',
+  clashStore.kits.length === 1 && clashStore.kits[0].name === 'chat-2'
+    && clashStore.kits[0].title === '聊天' && clashStore.kits[0].builtins.join(',') === 'read',
+  JSON.stringify(clashStore.kits))
+check('the renamed kit keeps its default and its bindings',
+  clashStore.defaultKit === 'chat-2' && clashStore.assignments['session-clash'] === 'chat-2',
+  JSON.stringify({ defaultKit: clashStore.defaultKit, assignments: clashStore.assignments }))
+process.env.USERPROFILE = savedHomeV2
+process.env.HOME = savedHomeV2b
+rmSync(clashHome, { recursive: true, force: true })
+
 // ---- legacy store: plugin-kits.json is read once ---------------------------
 const legacyHome = join(tmpdir(), `loadout-legacy-${process.pid}`)
 rmSync(legacyHome, { recursive: true, force: true })

@@ -418,7 +418,46 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  /**
+   * A kit saved before the preset list existed may carry a preset's name or
+   * title (`chat`, `plan`, `写作`…). `resolveKit` prefers user kits, so a
+   * default naming such a preset would actually answer the user's kit while the
+   * settings page marked the preset — two rows claiming 「默认」. Renaming is the
+   * only honest fix: keep the user's kit (with its tools) under a free name and
+   * repoint every binding that used the old one.
+   */
+  function disambiguatePresetClashes() {
+    const taken = new Set(presets.flatMap((preset) => [preset.name.toLowerCase(), preset.title.toLowerCase()]))
+    const changed = []
+    for (const kit of book.kits) {
+      const nameClash = taken.has(kit.name.toLowerCase())
+      const titleClash = taken.has(kit.title.toLowerCase())
+      if (!nameClash && !titleClash) continue
+      const before = kit.name
+      if (nameClash) {
+        let suffix = 2
+        let candidate = `${before}-${suffix}`
+        while (taken.has(candidate.toLowerCase()) || findKit(book.kits, candidate) !== undefined) {
+          suffix += 1
+          candidate = `${before}-${suffix}`
+        }
+        kit.name = candidate
+        taken.add(candidate.toLowerCase())
+      }
+      if (titleClash) kit.title = `${kit.title}（自建）`
+      for (const [sessionId, value] of Object.entries(book.assignments)) {
+        if (value === before) book.assignments[sessionId] = kit.name
+      }
+      if (book.defaultKit === before) book.defaultKit = kit.name
+      changed.push(`${before} → ${kit.name}`)
+    }
+    if (changed.length === 0) return
+    save()
+    ctx.logger?.warn(`dsh-loadout: 自建套装与预置同名，已改名（没有删除）：${changed.join('，')}`)
+  }
+
   migrateBook()
+  disambiguatePresetClashes()
 
   /** agent -> { selection: {base,kit,extras}, label, dispose } */
   const state = new Map()

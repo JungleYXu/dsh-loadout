@@ -475,9 +475,24 @@ window.__ModuleLoader__.load({
         }
       }, [sessionId])
 
+      // The label is this conversation's persisted binding, so read it as soon as
+      // the chip mounts: waiting for the first click is what made a bound
+      // conversation show 装备栏 until the menu was opened once.
       useEffect(() => {
-        if (open) refresh()
-      }, [open, refresh])
+        refresh()
+      }, [refresh])
+
+      // Another surface (the settings page, the /kit command) may have changed
+      // this conversation's binding while the chip sat idle.
+      useEffect(() => {
+        const sync = () => { refresh() }
+        document.addEventListener('dsh-loadout:changed', sync)
+        window.addEventListener('focus', sync)
+        return () => {
+          document.removeEventListener('dsh-loadout:changed', sync)
+          window.removeEventListener('focus', sync)
+        }
+      }, [refresh])
 
       useEffect(() => {
         if (!open) return undefined
@@ -946,7 +961,7 @@ window.__ModuleLoader__.load({
       // 我的套装 starts collapsed, like the chip: the page's job is "which set does
       // a new conversation start with", and a list of five kits does not answer it.
       // The test seam can seed it open so the card assertions never depend on a click.
-      const [openSections, setOpenSections] = useState(preview?.openSections ?? { presets: true, kits: false })
+      const [openSections, setOpenSections] = useState(preview?.openSections ?? { presets: false, kits: false })
 
       const refresh = useCallback(async () => {
         try {
@@ -1007,6 +1022,7 @@ window.__ModuleLoader__.load({
       // A collapsed 我的套装 still answers "which kit is the default", the same way
       // the chip does.
       const defaultKitRow = kits.find((kit) => kit.name === data.defaultKit)
+      const defaultPresetRow = presets.find((preset) => preset.name === data.defaultKit)
 
       const saveDraft = async () => {
         if (draft === null) return
@@ -1194,6 +1210,21 @@ window.__ModuleLoader__.load({
                 onDefault: () => act({ action: 'default', name: preset.name }),
                 onDelete: () => {},
               }))))
+          : null,
+        SHOW_PRESETS === true && openSections.presets === false
+          // Collapsed, exactly like 我的套装: only the preset that is the
+          // default stays visible, so the group still answers "new conversations
+          // start with this".
+          ? (defaultPresetRow === undefined
+            ? null
+            : h(MenuRow, {
+              key: `default-preset-${defaultPresetRow.name}`,
+              label: kitLabel(defaultPresetRow),
+              hint: '当前默认',
+              indent: true,
+              active: true,
+              onClick: () => act({ action: 'default', name: defaultPresetRow.name }),
+            }))
           : null,
         h(GroupHead, {
           title: '我的套装',

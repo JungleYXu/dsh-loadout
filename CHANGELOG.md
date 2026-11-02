@@ -2,6 +2,12 @@
 
 「装备栏」是一个 DeepSeek Harness 插件：给每个对话选一套工具（套装），只把用得上的工具投给模型。
 
+## 0.12.3
+
+- **标题栏按钮不再「点一下才对」**：芯片只在菜单被打开时才去读状态，所以进对话先看到「装备栏」，点开一次才换成套装名。现在挂载就读一次，并监听 dsh-loadout:changed 与窗口 ocus，别处切了套装也会立刻跟上。
+- **设置页「预设套装」默认折叠**：与「我的套装」一致——折叠时只显示当前被设为默认的那一套，展开才列出五套。
+- **同名撞车**：0.12 之前手建的套装如果叫 chat / plan 这类预置名，esolveKit 会优先命中自建的那套，于是设置页出现两行都标「默认」。现在启动时把自建套装改名（chat → chat-2，标题撞车则追加「（自建）」），并把 defaultKit 与所有 ssignments 指过去；只改名，不删任何工具。日志留一行说明。
+- 回归断言： user kit shadowing a preset is renamed、	he renamed kit keeps its default and its bindings、presets start collapsed、 collapsed preset group keeps the default visible。
 ## 0.12.2
 
 - **修「绑定到已不存在的套装」**：如果某个对话绑的套装在应用关着的时候被删掉（旧版本、手改 loadout.json、或别的机器同步过来的文件），启动后它会被当成「空套装」套用——等于把这对话的工具连同内置工具一起裁光，只剩 kit_*。现在这种绑定在第一次被读到时回退到「全部」，并把 ssignments 里那个失效名字改成 

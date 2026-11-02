@@ -344,6 +344,21 @@ try {
   check('kit cards show their own estimate', panelText.includes('≈860 tokens') && panelText.includes('≈420 tokens'), panelText.slice(0, 400))
   const deleteButtons = nodesIn(panel, (node) => node.type === 'button' && textOf(node) === '删除')
   check('only my kits can be deleted', deleteButtons.length === 2, `${deleteButtons.length} · 删除@${panelText.indexOf('删除')} · ${panelText.slice(0, 200)}`)
+
+  // Presets start collapsed, and while collapsed they behave like 我的套装: the
+  // one that is the default stays visible so the page still answers "a new
+  // conversation starts with this".
+  const presetDefault = { ...fixture, defaultKit: 'chat', selection: { base: 'kit', kit: 'chat', extras: [] } }
+  const collapsed = expand(registration.component({ preview: { data: presetDefault } }))
+  const collapsedText = textOf(collapsed)
+  check('presets start collapsed',
+    collapsedText.includes('预设套装 · 只读（5）') && !collapsedText.includes('写作'), collapsedText.slice(0, 400))
+  check('a collapsed preset group keeps the default visible',
+    collapsedText.includes('仅聊天') && collapsedText.includes('当前默认'), collapsedText.slice(0, 400))
+  const presetExpanded = expand(registration.component({ preview: { data: presetDefault, openSections: { presets: true, kits: false } } }))
+  const presetExpandedText = textOf(presetExpanded)
+  check('only the default preset carries the default tag',
+    presetExpandedText.includes('仅聊天') && presetExpandedText.includes('默认'), presetExpandedText.slice(0, 400))
   const renameButtons = nodesIn(panel, (node) => node.type === 'button' && textOf(node) === '重命名')
   // Renaming moved into 编辑: one editor for name, note and tools on the card.
   check('renaming lives inside 编辑 rather than its own button', renameButtons.length === 0 && editButtons.length === 2, `${renameButtons.length} · 重命名 / ${editButtons.length} · 编辑`)
