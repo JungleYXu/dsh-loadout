@@ -846,6 +846,24 @@ try {
 check('a preset name cannot be taken by a user kit',
   /预置/u.test(presetClashError ?? ''), presetClashError)
 
+// T22: a binding that names a kit removed outside the app falls back to 全部.
+// Simulated the way it really happens: the kit is gone from the store file when
+// the app starts again, so a fresh module instance has to cope with it.
+await ctxV2.registered.get('kit_create').execute(
+  { name: 'ghost-kit', title: '已删除的', builtins: ['read'], plugins: [] }, exec(agentB))
+await ctxV2.registered.get('kit_assign').execute({ sessionId: 'session-ghost', kit: 'ghost-kit' }, exec(agentB))
+const storeWithGhost = storeOf()
+storeWithGhost.kits = storeWithGhost.kits.filter((kit) => kit.name !== 'ghost-kit')
+writeFileSync(join(v2Home, '.dsh', 'loadout.json'), JSON.stringify(storeWithGhost), 'utf8')
+const v2b = await import('../index.js?v2=2')
+const ctxV2b = makeCtx()
+v2b.apply(ctxV2b, { defaultKit: '', kits: config.kits })
+const agentGhost = makeAgent(undefined, { id: 'session-ghost' })
+for (const handler of ctxV2b.handlers.get('agent/created') ?? []) handler(agentGhost)
+check('a binding to a deleted kit falls back to 全部',
+  storeOf().assignments['session-ghost'] === null && keptOf(agentGhost).includes('web_search'),
+  JSON.stringify({ assignments: storeOf().assignments, kept: keptOf(agentGhost) }))
+
 // T03/T05: the default changes again; conversations that already answered keep theirs.
 const agentC = makeAgent(undefined, { id: 'session-c' })
 await ctxV2.registered.get('kit_set_default').execute({ name: 'chat' }, exec(agentB))

@@ -1132,8 +1132,19 @@ export function apply(ctx, config = {}) {
    */
   function ensureBindingApplied(agent) {
     if (agent === undefined || agent === null) return
-    const value = ensureBinding(agent)
+    let value = ensureBinding(agent)
     if (value === undefined) return
+    // A stored binding can name a kit that no longer exists — an older build, a
+    // hand-edited store, or a kit deleted while the app was closed. Applying it
+    // would compute an empty allow list and strip the conversation down to the
+    // kit_* tools, so such a conversation falls back to 全部 and the dangling
+    // name is rewritten to stop it resurfacing on every read.
+    if (value !== null && value !== DEFAULT_DSH && resolveKit(lastAgent, value) === undefined) {
+      book.assignments[sessionIdOf(agent)] = null
+      save()
+      ctx.logger?.warn(`dsh-loadout: 套装「${value}」已不存在，这个对话回到「全部」`)
+      value = null
+    }
     const selection = selectionForBinding(value)
     const current = state.get(agent)?.selection
     if (current !== undefined && sameSelection(current, selection)) return
