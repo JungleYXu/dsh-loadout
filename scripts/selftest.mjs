@@ -9,7 +9,7 @@
  *   & "…\DeepSeek Harness.exe" dsh-loadout\scripts\selftest.mjs
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -32,7 +32,7 @@ const check = (label, ok, detail) => {
 }
 
 const SESSION_ID = 'session-1'
-const OWN_TOOLS = ['kit_list', 'kit_apply', 'kit_create', 'kit_set_tools', 'kit_set_default', 'kit_delete']
+const OWN_TOOLS = ['kit_list', 'kit_apply', 'kit_create', 'kit_set_tools', 'kit_set_default', 'kit_delete', 'kit_assign', 'kit_rename']
 const SCOPED = ['read', 'write', 'edit', 'glob', 'grep', 'pwsh', 'web_search', 'web_fetch', 'todo_write']
 /** Registered by each agent into its own layer: visible, but never restrictable. */
 const SCOPE_OWNED = ['subagent']
@@ -60,6 +60,14 @@ const definitionOf = (toolName) => ({
   description: `demo tool ${toolName}`,
   parameters: { type: 'object', properties: {}, additionalProperties: false },
 })
+
+/**
+ * Session headers and agents are shared by every fake host in this file: the
+ * plugin keeps one registry per process, and a second `apply()` (the legacy and
+ * v2 blocks) must see the conversations the first one registered.
+ */
+const fakeSessions = new Map()
+const fakeAgents = new Map()
 
 /** One fake host. `layers` is what the real tool runtime exposes. */
 function makeCtx() {
@@ -92,10 +100,15 @@ function makeCtx() {
     optional(dependencies, install) { install(childFor(dependencies, built, commands, routes, sessionAgentOf)) },
     inject(dependencies, install) { install(childFor(dependencies, built, commands, routes, sessionAgentOf)) },
   }
-  const sessions = new Map()
+  // `sessions` is the host's Session registry: `get(id)` hands back a Session
+  // whose `header` carries `createdAt` / `parentSession` / `origin`. The agents
+  // themselves live in their own map — the plugin only reads headers from this
+  // one, and `sessionController` is what resolves a Session id to an agent.
+  const sessions = fakeSessions
+  const agents = fakeAgents
   built.sessionController = {
     async resolveAgent(sessionId) {
-      if (sessions.has(sessionId)) return { agent: sessions.get(sessionId) }
+      if (agents.has(sessionId)) return { agent: agents.get(sessionId) }
       if (sessionId === SESSION_ID) return { agent: sessionAgentOf.agent }
       return { error: { message: `找不到会话 "${sessionId}"` } }
     },
@@ -104,7 +117,9 @@ function makeCtx() {
   built.handlers = handlers
   built.commands = commands
   built.routes = routes
-  built.sessions = sessions
+  built.sessions = { get: (sessionId) => sessions.get(sessionId) }
+  built.sessionTable = sessions
+  built.agentTable = agents
   return built
 }
 
@@ -130,6 +145,9 @@ function childFor(dependencies, built, commands, routes) {
     }
   }
   if (dependencies.includes('sessionController')) child.sessionController = built.sessionController
+  // The plugin injects `sessions` optionally; a fake host without it must still
+  // work (that is the 0.x path), so this mirrors the real `optional` contract.
+  if (dependencies.includes('sessions')) child.sessions = built.sessions
   return child
 }
 
@@ -178,8 +196,13 @@ check('registered state route', ctx.routes.has('/dsh-loadout/state'))
  * `layers.effect` is the append `restrict()` performs internally, which is how
  * the plugin masks those same tools without ever writing an allow list.
  */
-function makeAgent(tools = [...SCOPED, ...SCOPE_OWNED, 'demo_search', ...OWN_TOOLS]) {
-  const agent = { tools, filters: [], restrictable: new Set(GLOBAL) }
+let agentSeq = 0
+
+function makeAgent(tools = [...SCOPED, ...SCOPE_OWNED, 'demo_search', ...OWN_TOOLS], options = {}) {
+  // Every agent carries a Session id, because that id is the key a conversation's
+  // binding is stored under (`assignments[sessionId]`). An id-less fake made the
+  // whole binding layer look like a no-op.
+  const agent = { id: options.id ?? `session-agent-${++agentSeq}`, tools, filters: [], restrictable: new Set(GLOBAL) }
   const append = (filter) => {
     const entry = { filter, active: true }
     agent.filters.push(entry)
@@ -230,6 +253,15 @@ function makeAgent(tools = [...SCOPED, ...SCOPE_OWNED, 'demo_search', ...OWN_TOO
       },
     },
   }
+  // Publish the Session header and the agent itself, so `ensureBinding()` can
+  // read `createdAt` / `parentSession` / `origin` exactly like the host does.
+  const header = {
+    createdAt: options.createdAt ?? Date.now(),
+    ...(options.parentSession === undefined ? {} : { parentSession: options.parentSession }),
+    ...(options.origin === undefined ? {} : { origin: options.origin }),
+  }
+  fakeSessions.set(agent.id, { id: agent.id, header })
+  fakeAgents.set(agent.id, agent)
   return agent
 }
 
@@ -315,6 +347,17 @@ check('kit_list base is kit', listed.base === 'kit', listed.base)
 check('kit_list prefers the shipped config', listed.source === 'bundle 配置', listed.source)
 check('kit_list has three presets', listed.presets.length === 3, String(listed.presets.length))
 check('kit_list has no user kit yet', listed.kits.length === 0, String(listed.kits.length))
+// The host validates execute() output against the declared schema, so a field
+// that is returned but not declared fails the whole call at runtime
+// (`kit_list returned invalid output: "note" is not a declared property`).
+// Keep the two sides in sync.
+{
+  const schema = registered.get('kit_list').output.schema
+  const kitItem = schema.properties.kits.items.properties
+  const presetItem = schema.properties.presets.items.properties
+  check('kit_list declares every field it returns', 'note' in kitItem && 'note' in presetItem,
+    `kits=${Object.keys(kitItem).join(',')} presets=${Object.keys(presetItem).join(',')}`)
+}
 
 // ---- kit_apply by title ------------------------------------------------------
 const appliedKit = await run('kit_apply', { kit: '编程' }, agent)
@@ -540,7 +583,7 @@ check('a note survives a restart', afterRestart.kits.find((kit) => kit.name === 
 // ---- store schema ----------------------------------------------------------
 // 0.11.0 stamps the file so a later release can migrate instead of guessing.
 const stamped = JSON.parse(readFileSync(storePath, 'utf8')).schema
-check('the store file records its schema version', stamped === 1, String(stamped))
+check('the store file records its schema version', stamped === 2, String(stamped))
 
 // A store written by 0.10.x has no `schema` field at all; it still has to load,
 // because that is the exact file everyone upgrading from 0.10.x has on disk.
@@ -625,8 +668,7 @@ check('non-local Host refused', foreignResponse.status === 403, String(foreignRe
 // ---- GET /state is per-Session: two agents never leak into each other -------
 // The header chip asks for one conversation; answering from whichever agent was
 // touched last is the bug this covers.
-const secondAgent = makeAgent()
-ctx.sessions.set('session-2', secondAgent)
+const secondAgent = makeAgent([...SCOPED, ...SCOPE_OWNED, 'demo_search', ...OWN_TOOLS], { id: 'session-2' })
 await post({ action: 'applyBase', sessionId: SESSION_ID, base: 'kit', kit: 'coding' })
 await post({ action: 'applyBase', sessionId: 'session-2', base: 'kit', kit: 'research' })
 
@@ -654,6 +696,99 @@ check(
   JSON.stringify(ghostView.body.selection),
 )
 
+// ---- v2: one persisted binding per conversation ----------------------------
+// The plan's core promise: a conversation carries its own choice, so changing
+// the default later never reaches back into it, and an explicit switch survives
+// a restart. Everything here reads the store file, not the in-memory state.
+const v2Home = join(tmpdir(), `loadout-v2-${process.pid}`)
+rmSync(v2Home, { recursive: true, force: true })
+mkdirSync(join(v2Home, '.dsh', 'sessions', 'ws', 'session-old'), { recursive: true })
+const savedHomeV2 = process.env.USERPROFILE
+const savedHomeV2b = process.env.HOME
+process.env.USERPROFILE = v2Home
+process.env.HOME = v2Home
+writeFileSync(join(v2Home, '.dsh', 'loadout.json'), JSON.stringify({
+  schema: 1,
+  kits: [{ name: 'mine', title: '我的', builtins: ['read', 'write'], plugins: [] }],
+  defaultKit: '',
+}), 'utf8')
+const v2 = await import('../index.js?v2=1')
+const ctxV2 = makeCtx()
+v2.apply(ctxV2, { defaultKit: '', kits: config.kits })
+const fireCreated = (agent) => {
+  for (const handler of ctxV2.handlers.get('agent/created') ?? []) handler(agent)
+}
+const storeOf = () => JSON.parse(readFileSync(join(v2Home, '.dsh', 'loadout.json'), 'utf8'))
+const backups = () => readdirSync(join(v2Home, '.dsh')).filter((entry) => entry.startsWith('loadout.json.v1.bak-'))
+
+check('migration stamps schema 2', storeOf().schema === 2, String(storeOf().schema))
+check('migration freezes existing conversations on 全部', storeOf().assignments['session-old'] === null,
+  JSON.stringify(storeOf().assignments))
+check('migration keeps the schema-1 file aside', backups().length === 1, backups().join(','))
+
+const agentA = makeAgent(undefined, { id: 'session-a' })
+fireCreated(agentA)
+check('a new conversation records 全部', storeOf().assignments['session-a'] === null, JSON.stringify(storeOf().assignments))
+check('a new conversation starts unmasked', activeFilters(agentA).length === 0, String(activeFilters(agentA).length))
+
+await ctxV2.registered.get('kit_set_default').execute({ name: 'coding' }, exec(agentA))
+check('changing the default leaves an existing conversation alone',
+  activeFilters(agentA).length === 0 && keptOf(agentA).includes('web_search'),
+  JSON.stringify({ filters: activeFilters(agentA).length, kept: keptOf(agentA) }))
+
+const agentB = makeAgent(undefined, { id: 'session-b' })
+fireCreated(agentB)
+check('a later conversation starts on the saved default',
+  !keptOf(agentB).includes('web_search') && keptOf(agentB).includes('read'), keptOf(agentB).join(','))
+check('a later conversation records the default', storeOf().assignments['session-b'] === 'coding',
+  JSON.stringify(storeOf().assignments))
+
+const agentFork = makeAgent(undefined, { id: 'session-fork', parentSession: 'session-b' })
+fireCreated(agentFork)
+check('a fork inherits its parent binding', storeOf().assignments['session-fork'] === 'coding',
+  JSON.stringify(storeOf().assignments))
+
+const agentChild = makeAgent(undefined, { id: 'sub-1', origin: 'subagent' })
+fireCreated(agentChild)
+check('a subagent gets no binding', storeOf().assignments['sub-1'] === undefined,
+  JSON.stringify(storeOf().assignments))
+
+const assigned = await ctxV2.registered.get('kit_assign').execute({ sessionId: 'session-b', kit: 'mine' }, exec(agentB))
+check('kit_assign pins the conversation', assigned.ok !== false && storeOf().assignments['session-b'] === 'mine',
+  JSON.stringify({ assigned, assignments: storeOf().assignments }))
+
+const dryDelete = await ctxV2.registered.get('kit_delete').execute({ name: 'mine', dryRun: true }, exec(agentB))
+check('kit_delete --dryRun counts without deleting',
+  dryDelete.affectedSessions === 1 && storeOf().kits.some((kit) => kit.name === 'mine'),
+  JSON.stringify(dryDelete))
+
+const deleted = await ctxV2.registered.get('kit_delete').execute({ name: 'mine' }, exec(agentB))
+check('kit_delete clears the bindings it owned',
+  deleted.deleted === true && storeOf().assignments['session-b'] === null,
+  JSON.stringify({ deleted, assignments: storeOf().assignments }))
+
+const createdV2 = await ctxV2.registered.get('kit_create').execute(
+  { name: 'k-one', title: '一号', builtins: ['read'], plugins: [] }, exec(agentB))
+const renamed = await ctxV2.registered.get('kit_rename').execute({ name: 'k-one', title: '改过的一号' }, exec(agentB))
+const listedV2 = await ctxV2.registered.get('kit_list').execute({}, exec(agentB))
+check('kit_rename changes the title and keeps the id',
+  renamed.ok !== false && listedV2.kits.some((kit) => kit.name === 'k-one' && kit.title === '改过的一号'),
+  JSON.stringify({ createdV2, renamed, kits: listedV2.kits.map((kit) => [kit.name, kit.title]) }))
+check('kit_list reports the binding', listedV2.binding === null || listedV2.binding === '',
+  JSON.stringify(listedV2.binding))
+
+let reservedError
+try {
+  await ctxV2.registered.get('kit_create').execute({ name: '全部', title: '占位', builtins: ['read'], plugins: [] }, exec(agentB))
+} catch (error) {
+  reservedError = String(error?.message ?? error)
+}
+check('a reserved name is refused', /全部/u.test(reservedError ?? ''), reservedError)
+
+process.env.USERPROFILE = savedHomeV2
+process.env.HOME = savedHomeV2b
+rmSync(v2Home, { recursive: true, force: true })
+
 // ---- legacy store: plugin-kits.json is read once ---------------------------
 const legacyHome = join(tmpdir(), `loadout-legacy-${process.pid}`)
 rmSync(legacyHome, { recursive: true, force: true })
@@ -670,7 +805,10 @@ const legacyModule = await import('../index.js?legacy=1')
 const ctx3 = makeCtx()
 legacyModule.apply(ctx3, config)
 const legacyListed = await ctx3.registered.get('kit_list').execute({}, exec(makeAgent()))
-check('legacy store is read', legacyListed.source === join(legacyHome, '.dsh', 'plugin-kits.json'), legacyListed.source)
+// Migration copies the legacy kits into `loadout.json` and saves immediately, so
+// the file the user's kits live in is the new one from the first boot. What must
+// survive is the data (kits + default), not the old path string.
+check('legacy store is migrated', legacyListed.source === join(legacyHome, '.dsh', 'loadout.json'), legacyListed.source)
 check('legacy kit survives', legacyListed.kits.some((kit) => kit.name === 'old'), JSON.stringify(legacyListed.kits.map((kit) => kit.name)))
 check('legacy default survives', legacyListed.default === 'old', legacyListed.default)
 await ctx3.registered.get('kit_set_default').execute({ name: 'coding' }, exec(makeAgent()))

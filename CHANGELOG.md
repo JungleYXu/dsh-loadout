@@ -2,6 +2,25 @@
 
 「装备栏」是一个 DeepSeek Harness 插件：给每个对话选一套工具（套装），只把用得上的工具投给模型。
 
+## 未发布
+
+- 修 `kit_list`：返回值里带 `note`，但输出 schema 没有声明它，宿主按 schema 校验，于是这个工具**每次调用都直接失败**（`kit_list returned invalid output: "note" is not a declared property`）。现在 `note` 是合法字段，渲染时也会在套装名后显示备注；`selftest` 新增断言 `kit_list declares every field it returns`，防止返回值与 schema 再次漂移。
+- README 顶部加「同名项目说明」：npm 上的 `dsh-loadout` 是本插件唯一的发行包，GitHub 上另有两个同名的独立项目（`YongjianWan/dsh-loadout`、`JYDW-1/dsh-loadout`）。排查段加「怀疑装到了同名插件」：确认 `repository.url`、以及两个同名包不能共存时的重装步骤。中英文同步。
+
+## 0.12.0
+
+这一版换掉了「选择只活在内存里」这件事——它是之前一连串“默认套装不生效”“切换后重启又变回去”的根因。
+
+- **每个对话有自己的绑定**。`loadout.json` 新增 `assignments: { <sessionId>: 套装名 | "@dsh" | null }`，`null` 表示「全部」。对话第一次被看到时写入一次（默认套装 / 父对话分支继承 / 迁移前的旧对话记 `null`），之后只有显式切换才会改它。
+- **改默认只影响新对话**。`kit_set_default` 只写 `defaultKit`，不再动已有对话；设置页也加了同一句话。
+- **迁移**：首次启动把旧 store 升级到 `schema: 2`，先备份成 `loadout.json.v1.bak-<时间戳>`，并给已存在的对话写 `null`（保持它们当时的实际状态），不改变任何人今天看到的工具。
+- **新工具**：`kit_assign(sessionId, kit)`（把某个对话钉到一套工具，`全部` / `内置` / 套装名都收）、`kit_rename(name, title)`（只改显示名，`name` 是绑定的键，保持稳定）；`kit_delete` 支持 `dryRun`，返回受影响的对话数；`kit_list` 增加 `binding` 与每套的 `boundCount`。
+- **删除前说清楚**：设置页点删除会先问宿主有多少对话在用这套，确认文案里带上数量；删除后这些对话回到「全部」。
+- **预置套装回来了**，并按用途重写成五套只读预设：`chat` 仅聊天、`coding` 编程用、`research` 查找资料、`plan` 项目梳理、`writing` 写作（每套都带 `send_message` 等协作五件套）。
+- **命名校验**：保留名（全部 / 仅内置 / 默认 / all / builtin / 以及所有预设名）不能用作套装名；长度 1–32，禁止控制字符与 `/ \ : * ? " < > |`。
+- **标题栏更安静**：`全部` 时芯片只显示「装备栏」，`仅内置` / 套装显示各自名字并带蓝点。
+- 测试：`selftest` 新增 12 项 v2 断言（迁移、默认只影响新对话、分支继承、子代理不记录、`kit_assign`、`kit_delete --dryRun`、`kit_rename` 保持 id、保留名拒绝），并让假宿主真正按层拒绝未知工具名。
+
 ## 0.11.2
 
 - README 的「预置套装」一节改写为**历史记录**的口径：明确它从 0.10.2 起就不在界面里，用户看到的是「全部 / 仅内置 / 我的套装」，而三套数据仍在 `cordis.patch.yml` 里、`/kit 写作|调研|编程` 仍可用；标题也改成「界面不展示，命令仍可用」。中英文同步。

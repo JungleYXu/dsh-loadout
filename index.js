@@ -14,13 +14,27 @@
  *   dsh  → catalog built-ins ∪ tools(extras) ∪ OWN_TOOLS
  *   kit  → tools(kit.builtins) ∪ tools(kit.plugins ∪ extras) ∪ OWN_TOOLS
  *
- * Presets (写作 / 调研 / 编程) ship in `cordis.patch.yml` and are read-only.
- * User kits live in `~/.dsh/loadout.json`:
+ * Presets (仅聊天 / 编程用 / 查找资料 / 项目梳理 / 写作) ship in `cordis.patch.yml`
+ * and are read-only. User kits live in `~/.dsh/loadout.json`:
  *
- *   { "kits": [{ "name", "title", "builtins", "plugins" }], "defaultKit": "" }
+ *   {
+ *     "schema": 2,
+ *     "kits": [{ "name", "title", "note", "builtins", "plugins" }],
+ *     "defaultKit": "",
+ *     "assignments": { "<sessionId>": "kit-name" | "@dsh" | null },
+ *     "migratedAt": "2026-11-02T13:00:00.000Z"
+ *   }
+ *
+ * `assignments` is what makes a conversation's choice last: every conversation
+ * gets ONE persisted binding when it is created (never re-derived afterwards),
+ * so changing the default only affects conversations created later, and an
+ * explicit switch survives a restart. `null` means 全部 — an explicit choice, not
+ * "no answer". `migratedAt` lets a conversation that predates the upgrade keep
+ * the state it effectively had instead of inheriting today's default.
  *
  * Three surfaces share the same store and the same operations:
- *   - tools:  kit_list / kit_apply / kit_create / kit_set_tools / kit_set_default / kit_delete
+ *   - tools:  kit_list / kit_apply / kit_create / kit_set_tools / kit_set_default
+ *             / kit_delete / kit_assign / kit_rename
  *   - chat:   the `/kit [name]` command
  *   - web UI: the header chip and 设置 → 装备栏, served under /dsh-loadout/
  *
@@ -35,7 +49,7 @@
  * @module dsh-loadout
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -45,7 +59,7 @@ export const name = 'dsh-loadout'
 /** Cordis waits for the tool registry before applying this plugin. */
 export const inject = ['tools']
 
-const OWN_TOOLS = ['kit_list', 'kit_apply', 'kit_create', 'kit_set_tools', 'kit_set_default', 'kit_delete']
+const OWN_TOOLS = ['kit_list', 'kit_apply', 'kit_create', 'kit_set_tools', 'kit_set_default', 'kit_delete', 'kit_assign', 'kit_rename']
 
 /** Runtime store. Profile-independent on purpose: one place, easy to back up. */
 const STORE_PATH = join(homedir(), '.dsh', 'loadout.json')
@@ -54,11 +68,39 @@ const STORE_PATH = join(homedir(), '.dsh', 'loadout.json')
 const LEGACY_STORE_PATH = join(homedir(), '.dsh', 'plugin-kits.json')
 
 /**
- * Version of the on-disk shape. Files written before 0.11.0 have no `schema`
- * field and are read as 0; a shape change bumps this and is migrated in
- * `normalizeStore`, so a release never has to guess what it is looking at.
+ * Version of the on-disk shape. 2 introduced `assignments` (one persisted
+ * binding per conversation) and `migratedAt`; 1 and 0 are the same kit-only
+ * shape and are upgraded by `migrateBook`. A shape change bumps this, so a
+ * release never has to guess what it is looking at.
  */
-const STORE_SCHEMA = 1
+const STORE_SCHEMA = 2
+
+/**
+ * Names a user kit may not take: the two built-in choices, the words the UI
+ * shows for "no kit", and the shipped preset names (checked separately because
+ * they come from the bundle). `title` is free text; only `name` is an id.
+ */
+const RESERVED_NAMES = ['全部', '全部工具', '仅内置', '自定义', '默认', 'all', 'builtin', 'custom', 'default']
+
+const NAME_MAX = 32
+
+/** Ids the UI parses, so a kit may not look like a path or a glob. */
+const NAME_FORBIDDEN = /[\\/:*?"<>|\u0000-\u001f\u007f]/u
+
+/**
+ * Normalize and validate a kit id. NFKC folds full-width letters (`ｃｈａｔ` →
+ * `chat`), which otherwise produce two ids that look identical in the menu.
+ */
+function assertKitName(raw, presets) {
+  const value = typeof raw === 'string' ? raw.trim().normalize('NFKC') : ''
+  if (value === '') throw new Error('名字不能为空')
+  if (value.length > NAME_MAX) throw new Error(`名字最多 ${NAME_MAX} 个字符`)
+  if (NAME_FORBIDDEN.test(value)) throw new Error('名字里不能有 / \\ : * ? " < > | 或控制字符')
+  const lower = value.toLowerCase()
+  if (RESERVED_NAMES.includes(lower)) throw new Error(`"${value}" 是保留名字，请换一个名字`)
+  if (presets !== undefined && findKit(presets, value) !== undefined) throw new Error(`"${value}" 与预置套装同名，请换一个名字`)
+  return value
+}
 
 /**
  * One-line reminder on a kit ("套装1（用于视频制作）"). It rides in the menu next
@@ -130,20 +172,42 @@ function normalizeKits(rows) {
  * Normalize the on-disk store. Missing arrays, unknown fields and a bare array
  * (a hand-written store) all degrade to an empty, still-usable book.
  *
- * `schema` records what the file claimed. 0 means "written before 0.11.0", which
- * is the same shape as 1 apart from the missing field, so it is upgraded on the
- * next save. Unknown future versions are still parsed by their known fields
- * rather than rejected — losing a user's kits over a number would be worse than
- * reading what we do understand.
+ * `schema` records what the file claimed. 0/1 mean "written before 0.11.x" and
+ * carry no bindings; `migrateBook` stamps `migratedAt` and lets conversations
+ * that already existed keep the state they effectively had. Unknown future
+ * versions are still parsed by their known fields rather than rejected — losing
+ * a user's kits over a number would be worse than reading what we understand.
  */
 function normalizeStore(value) {
-  if (Array.isArray(value)) return { schema: 0, kits: normalizeKits(value), defaultKit: '' }
+  if (Array.isArray(value)) {
+    return { schema: 0, kits: normalizeKits(value), defaultKit: '', assignments: {}, migratedAt: undefined }
+  }
   if (typeof value !== 'object' || value === null) return undefined
   return {
     schema: Number.isInteger(value.schema) ? value.schema : 0,
     kits: normalizeKits(value.kits),
     defaultKit: typeof value.defaultKit === 'string' ? value.defaultKit.trim() : '',
+    assignments: normalizeAssignments(value.assignments),
+    migratedAt: typeof value.migratedAt === 'string' && !Number.isNaN(Date.parse(value.migratedAt))
+      ? value.migratedAt
+      : undefined,
   }
+}
+
+/**
+ * Session id → binding. `null` is a real value here (全部), so a missing key and
+ * a stored `null` must stay distinguishable: `hasOwnProperty` decides, never a
+ * truthiness test.
+ */
+function normalizeAssignments(value) {
+  const out = {}
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return out
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof key !== 'string' || key === '') continue
+    if (entry === null) out[key] = null
+    else if (typeof entry === 'string' && entry.trim() !== '') out[key] = entry.trim()
+  }
+  return out
 }
 
 function readStore() {
@@ -254,9 +318,18 @@ export function apply(ctx, config = {}) {
   const presets = normalizeKits(config?.kits)
   const loaded = readStore()
   /** My kits: the user-created ones only. Presets are never stored here. */
+  /**
+   * My kits: the user-created ones only. Presets are never stored here.
+   *
+   * `assignments` is the v2 binding table: one entry per conversation, written
+   * once and then only on an explicit switch. `migratedAt` marks the upgrade, so
+   * a conversation older than it keeps the state it effectively had.
+   */
   const book = {
     kits: migrateUserKits(loaded?.store.kits ?? [], presets),
     defaultKit: loaded?.store.defaultKit ?? (typeof config?.defaultKit === 'string' ? config.defaultKit.trim() : ''),
+    assignments: loaded?.store.assignments ?? {},
+    migratedAt: loaded?.store.migratedAt,
     // The file the kits actually came from: the legacy path on the first boot
     // after the rename, the new one afterwards.
     source: loaded?.path ?? 'bundle 配置',
@@ -266,7 +339,7 @@ export function apply(ctx, config = {}) {
     writeStore({
       // Stamped so a future release can migrate instead of guessing. Files from
       // 0.10.x and earlier have no `schema`; normalizeStore reads them as 0 and
-      // the first save upgrades them.
+      // migrateBook upgrades them.
       schema: STORE_SCHEMA,
       kits: book.kits.map((kit) => ({
         name: kit.name,
@@ -279,9 +352,73 @@ export function apply(ctx, config = {}) {
         note: kit.note ?? '',
       })),
       defaultKit: book.defaultKit,
+      assignments: book.assignments,
+      ...(book.migratedAt === undefined ? {} : { migratedAt: book.migratedAt }),
     })
-    book.source = STORE_PATH
+    // `source` answers "where do the user's kits live". Writing assignments or a
+    // default is bookkeeping, not a kit, so it does not turn a fresh install's
+    // 「bundle 配置」 into a file path; saving a kit does.
+    if (book.kits.length > 0) book.source = STORE_PATH
   }
+
+  /** Session ids that already exist on disk (conversations only, not subagents). */
+  function knownConversations() {
+    const root = join(homedir(), '.dsh', 'sessions')
+    const out = []
+    try {
+      for (const workspace of readdirSync(root, { withFileTypes: true })) {
+        if (!workspace.isDirectory()) continue
+        const dir = join(root, workspace.name)
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (entry.isDirectory() && entry.name.startsWith('session-')) out.push(entry.name)
+        }
+      }
+    } catch {
+      // No sessions directory yet: a fresh install has nothing to migrate.
+    }
+    return out
+  }
+
+  /**
+   * Upgrade the store to schema 2 exactly once.
+   *
+   * Before v2 a conversation had no stored choice, so whatever it showed was
+   * inherited from the default at the moment it was created. Freezing that as
+   * `null` (全部) for the conversations that already exist is the honest reading:
+   * it changes nobody's tools today, and it stops a later default change from
+   * reaching back into conversations the user never touched. The pre-upgrade
+   * file is copied aside first, so a wrong guess is undoable by hand.
+   */
+  function migrateBook() {
+    if (book.migratedAt !== undefined) return
+    if (loaded !== undefined && loaded.store.schema >= STORE_SCHEMA) {
+      book.migratedAt = new Date().toISOString()
+      save()
+      return
+    }
+    try {
+      if (loaded?.path !== undefined && existsSync(loaded.path)) {
+        copyFileSync(loaded.path, `${loaded.path}.v1.bak-${Date.now()}`)
+      }
+    } catch {
+      // A backup is best-effort; the migration itself still has to run.
+    }
+    book.migratedAt = new Date().toISOString()
+    for (const sessionId of knownConversations()) {
+      if (!Object.prototype.hasOwnProperty.call(book.assignments, sessionId)) book.assignments[sessionId] = null
+    }
+    // Writing the upgraded file must not make an untouched install look as if the
+    // user had saved kits there: `source` is what the UI prints, and a fresh
+    // install with nothing of the user's own still reads 「bundle 配置」.
+    const before = book.source
+    save()
+    if (book.kits.length === 0 && book.defaultKit === '') book.source = before
+    if (knownConversations().length > 0) {
+      ctx.logger?.info('dsh-loadout: 升级到 schema 2，已有对话保持原状（全部）')
+    }
+  }
+
+  migrateBook()
 
   /** agent -> { selection: {base,kit,extras}, label, dispose } */
   const state = new Map()
@@ -296,6 +433,11 @@ export function apply(ctx, config = {}) {
    * so this is captured through an optional injection instead of read directly.
    */
   let sessionController
+  /**
+   * The session service, used only to read a Session's header (createdAt /
+   * parentSession / origin). Optional for the same reason as sessionController.
+   */
+  let sessions
   let lastAgent
   /** Every tool name this profile can expose; filled by learnTools below. */
   const knownTools = new Set(OWN_TOOLS)
@@ -316,10 +458,91 @@ export function apply(ctx, config = {}) {
     return { base: BASE_ALL, kit: null, extras: [] }
   }
 
+  /** The Session id behind an agent; `Agent.id` is the Session id. */
+  function sessionIdOf(agent) {
+    const id = agent?.id ?? agent?.session?.id
+    return typeof id === 'string' && id !== '' ? id : undefined
+  }
+
+  /** The Session header (createdAt / parentSession / origin), when available. */
+  function sessionHeaderOf(sessionId) {
+    if (sessionId === undefined || sessions === undefined) return undefined
+    try {
+      return sessions.get?.(sessionId)?.header
+    } catch {
+      return undefined
+    }
+  }
+
+  /** `hasOwnProperty`, because a stored `null` (全部) is a real answer. */
+  function bindingOf(sessionId) {
+    if (typeof sessionId !== 'string') return undefined
+    return Object.prototype.hasOwnProperty.call(book.assignments, sessionId)
+      ? book.assignments[sessionId]
+      : undefined
+  }
+
+  function selectionForBinding(value) {
+    if (value === undefined || value === null) return emptySelection()
+    if (value === DEFAULT_DSH) return { base: BASE_DSH, kit: null, extras: [] }
+    return { base: BASE_KIT, kit: value, extras: [] }
+  }
+
+  function bindingForSelection(selection) {
+    if (selection.base === BASE_DSH) return DEFAULT_DSH
+    if (selection.base === BASE_KIT) return selection.kit ?? null
+    return null
+  }
+
+  /** What a conversation created right now would start from. */
+  function defaultBinding() {
+    const wanted = book.defaultKit
+    if (wanted === '') return null
+    if (wanted === DEFAULT_DSH) return DEFAULT_DSH
+    return resolveKit(lastAgent, wanted) === undefined ? null : wanted
+  }
+
+  /**
+   * Give this conversation its ONE binding, if it has none yet.
+   *
+   * Called lazily (first state read, first tool call) as well as on
+   * `agent/created`, because the tool layer may not be readable yet when
+   * `agent/created` fires. Three rules:
+   *   - a fork inherits its parent's binding (the parent's context is what the
+   *     child was cut from; re-deriving it from today's default would change
+   *     the tools mid-fork);
+   *   - a conversation that predates the upgrade keeps the state it effectively
+   *     had (全部) instead of inheriting today's default;
+   *   - a subagent gets no entry at all (R11) — its parent's filters already
+   *     shape what it can see, and it must not pin a kit for itself.
+   */
+  function ensureBinding(agent) {
+    const sessionId = sessionIdOf(agent)
+    if (sessionId === undefined) return undefined
+    const existing = bindingOf(sessionId)
+    if (existing !== undefined) return existing
+    const header = sessionHeaderOf(sessionId)
+    if (header?.origin === 'subagent') return undefined
+    let value
+    const parentBinding = header?.parentSession === undefined ? undefined : bindingOf(header.parentSession)
+    if (parentBinding !== undefined) value = parentBinding
+    else if (book.migratedAt !== undefined && typeof header?.createdAt === 'number'
+      && header.createdAt < Date.parse(book.migratedAt)) value = null
+    else value = defaultBinding()
+    book.assignments[sessionId] = value
+    save()
+    return value
+  }
+
   function currentSelection(agent) {
     const entry = agent === undefined || agent === null ? undefined : state.get(agent)
     const raw = entry?.selection
-    if (raw === undefined) return emptySelection()
+    if (raw === undefined) {
+      // No live restriction yet: fall back to the persisted binding, so a
+      // restarted app and a fresh HTTP read agree with what the chip shows.
+      const bound = bindingOf(sessionIdOf(agent))
+      return bound === undefined ? emptySelection() : selectionForBinding(bound)
+    }
     const base = raw.base === BASE_DSH || raw.base === BASE_KIT ? raw.base : BASE_ALL
     if (base === BASE_ALL) return emptySelection()
     if (base === BASE_DSH) return { base: BASE_DSH, kit: null, extras: dedupe(asNames(raw.extras)) }
@@ -756,7 +979,7 @@ export function apply(ctx, config = {}) {
    * Apply one choice to one agent. Every surface (menu, settings page, /kit)
    * funnels through here so the three never disagree.
    */
-  function useSelection(agent, selection) {
+  function useSelection(agent, selection, options = {}) {
     if (agent?.ctx?.tools === undefined) return { ok: false, reason: '这个会话没有可用的工具作用域（agent.ctx.tools）' }
     const normalized = normalizeSelection(agent, selection)
     if (normalized === undefined) {
@@ -774,6 +997,17 @@ export function apply(ctx, config = {}) {
     const result = applyMask(agent, keep)
     if (!result.ok) return result
     state.set(agent, { selection: normalized, label, dispose: result.dispose })
+    // An explicit switch is the only thing that rewrites this conversation's
+    // binding (ensureBinding writes the first one). Everything else — a default
+    // change, a restart — must leave it alone.
+    const sessionId = sessionIdOf(agent)
+    if (sessionId !== undefined && options.persist !== false) {
+      const next = bindingForSelection(normalized)
+      if (bindingOf(sessionId) !== next) {
+        book.assignments[sessionId] = next
+        save()
+      }
+    }
     if (result.bypassed.length > 0) {
       ctx.logger?.warn(`dsh-loadout: 隐藏 ${result.hidden.length} 个工具，其中 ${result.bypassed.length} 个走工具层遮罩（${result.bypassed.join(', ')}）`)
     }
@@ -874,39 +1108,47 @@ export function apply(ctx, config = {}) {
   }
 
   /**
-   * Apply the configured default kit to an agent that has no selection yet.
+   * Does the live selection already come from this binding?
    *
-   * `agent/created` is the natural place for this, but it fires while the agent
-   * is still being built: its tool layer may not be readable yet, and a failed
-   * mask there is indistinguishable from "no default configured". 0.9.x shipped
-   * exactly that silent no-op — new conversations always started at 全部 even
-   * with a default saved. Repeating the same idempotent step from the first
-   * state read closes the gap without timers: the UI fetches state before the
-   * first message, and `state.has(agent)` keeps an explicit choice from being
-   * overwritten.
+   * Only the base and the kit are compared: 加挂 (extras) are session-local and
+   * deliberately NOT persisted to `assignments`, so a state read that treated a
+   * different extras list as "the binding changed" would wipe them — the exact
+   * regression this comparison exists to prevent.
    */
-  function ensureDefault(agent) {
+  function sameSelection(left, right) {
+    return left.base === right.base
+      && (left.kit ?? null) === (right.kit ?? null)
+  }
+
+  /**
+   * Make this conversation's tool layer match its persisted binding.
+   *
+   * `ensureBinding` owns the "what does this conversation start from" decision;
+   * this function only applies it. It is idempotent (once base+kit match, nothing
+   * is re-applied), and it runs from `agent/created`, from one deferred retry
+   * (the tool layer can attach a tick after creation), and from `snapshot()` —
+   * the UI reads state before the first message, which closes the 0.9.x window
+   * where a saved default silently did nothing.
+   */
+  function ensureBindingApplied(agent) {
     if (agent === undefined || agent === null) return
-    if (state.has(agent)) return
-    if (book.defaultKit === '') return
-    if (book.defaultKit === DEFAULT_DSH) {
-      const result = useSelection(agent, { base: BASE_DSH, extras: [] })
-      if (!result.ok) ctx.logger?.warn(`dsh-loadout: 新对话的「仅内置」默认未应用：${result.reason}`)
-      return
-    }
-    const kit = resolveKit(agent, book.defaultKit)
-    if (kit === undefined) return
-    const result = useSelection(agent, { base: BASE_KIT, kit: kit.name, extras: [] })
-    if (!result.ok) ctx.logger?.warn(`dsh-loadout: 默认套装 "${kit.name}" 未应用：${result.reason}`)
+    const value = ensureBinding(agent)
+    if (value === undefined) return
+    const selection = selectionForBinding(value)
+    const current = state.get(agent)?.selection
+    if (current !== undefined && sameSelection(current, selection)) return
+    // The binding is already stored by ensureBinding; applying it must not write
+    // it again (that would turn a default into an explicit choice).
+    const result = useSelection(agent, selection, { persist: false })
+    if (!result.ok) ctx.logger?.warn(`dsh-loadout: 会话绑定 ${labelOf(agent, selection)} 未应用：${result.reason}`)
   }
 
   ctx.on('agent/created', (agent) => {
     rememberAgent(agent)
-    ensureDefault(agent)
+    ensureBindingApplied(agent)
     // The tool layer can attach a tick after creation; one deferred retry covers
-    // that race without putting timers on any hot path (ensureDefault is
-    // idempotent and does nothing once the agent has a selection).
-    const retry = setTimeout(() => ensureDefault(agent), 100)
+    // that race without putting timers on any hot path.
+    const retry = setTimeout(() => ensureBindingApplied(agent), 100)
     if (typeof retry?.unref === 'function') retry.unref()
   })
 
@@ -1114,6 +1356,13 @@ export function apply(ctx, config = {}) {
   }
 
   // ---- shared operations, used by tools, the command and the routes --------
+  /** How many conversations are pinned to this kit (a delete warning quotes it). */
+  function boundCountOf(name) {
+    let count = 0
+    for (const value of Object.values(book.assignments)) if (value === name) count += 1
+    return count
+  }
+
   function kitRow(kit) {
     const parts = kitParts(kit)
     return {
@@ -1125,15 +1374,16 @@ export function apply(ctx, config = {}) {
       allow: rawKitAllow(kit),
       description: describeKit(kit),
       isDefault: kit.name === book.defaultKit,
+      boundCount: boundCountOf(kit.name),
     }
   }
 
   function snapshot(agent = lastAgent) {
-    // A new conversation may reach its first state read before the creation
-    // listener could install the default (the tool layer is not readable yet at
-    // that moment). Retrying here means the chip shows, and the first message
-    // uses, the configured default instead of 全部.
-    ensureDefault(agent)
+    // A conversation may reach its first state read before the creation listener
+    // could install its binding (the tool layer is not readable yet at that
+    // moment). Retrying here means the chip shows, and the first message uses,
+    // the binding instead of 全部.
+    ensureBindingApplied(agent)
     const selection = currentSelection(agent)
     const appliedPlugins = appliedPluginsFor(agent, selection)
     const availableExtras = availableExtrasFor(agent, selection)
@@ -1166,6 +1416,10 @@ export function apply(ctx, config = {}) {
       presetNames: presets.map((kit) => kit.name),
       kits: book.kits.map((kit) => priced(kitRow(kit))),
       defaultKit: book.defaultKit,
+      // This conversation's own binding: `null` (全部), '@dsh', a kit name, or
+      // '' when the conversation has none (a subagent). The chip reads this
+      // instead of inferring "no kit" from the live label.
+      binding: bindingOf(sessionIdOf(agent)) ?? '',
       ledger,
       catalog,
       tools: toolCatalog(),
@@ -1200,8 +1454,8 @@ export function apply(ctx, config = {}) {
       const kit = normalizeKit(input ?? {})
 
       if (kit === undefined) throw new Error('名字不能为空')
+      kit.name = assertKitName(kit.name, presets)
       if (findKit(book.kits, kit.name) !== undefined) throw new Error(`套装 "${kit.name}" 已存在`)
-      if (findKit(presets, kit.name) !== undefined) throw new Error(`"${kit.name}" 与预置套装同名，请换一个名字`)
       if (Array.isArray(input?.builtins) || Array.isArray(input?.plugins)) {
         kit.builtins = dedupe(asNames(input.builtins))
         kit.plugins = dedupe(asNames(input.plugins))
@@ -1227,10 +1481,15 @@ export function apply(ctx, config = {}) {
       }
       const oldName = kit.name
       if (typeof input.rename === 'string' && input.rename.trim() !== '' && input.rename.trim() !== kit.name) {
-        if (findKit(book.kits, input.rename) !== undefined) throw new Error(`套装 "${input.rename}" 已存在`)
-        if (findKit(presets, input.rename) !== undefined) throw new Error(`"${input.rename}" 与预置套装同名，请换一个名字`)
-        if (book.defaultKit === kit.name) book.defaultKit = input.rename.trim()
-        kit.name = input.rename.trim()
+        const nextName = assertKitName(input.rename, presets)
+        if (findKit(book.kits, nextName) !== undefined) throw new Error(`套装 "${nextName}" 已存在`)
+        if (book.defaultKit === kit.name) book.defaultKit = nextName
+        // A rename moves the identity, so every conversation pinned to the old
+        // name follows it — otherwise those conversations would read as 全部.
+        for (const [sessionId, value] of Object.entries(book.assignments)) {
+          if (value === oldName) book.assignments[sessionId] = nextName
+        }
+        kit.name = nextName
       }
       if (typeof input.title === 'string' && input.title.trim() !== '') kit.title = input.title.trim()
       if (typeof input.note === 'string') kit.note = clampNote(input.note)
@@ -1276,21 +1535,31 @@ export function apply(ctx, config = {}) {
       return kit
     },
     remove(input) {
+      const dryRun = input?.dryRun === true
       const wanted = String(input?.name ?? '')
       const kit = findKit(book.kits, wanted)
       if (kit === undefined) {
         if (findKit(presets, wanted) !== undefined) throw new Error('预置套装只读，请另存为我的套装')
         throw new Error(`未知套装 "${wanted}"`)
       }
+      // Quoted by the delete confirmation ("N 个对话正在用它") and by the tool's
+      // dry run, so a destructive click is never a surprise.
+      const affected = boundCountOf(kit.name)
+      if (dryRun) return { kit, affected }
       book.kits = book.kits.filter((row) => row !== kit)
       if (book.defaultKit === kit.name) book.defaultKit = ''
+      // A binding is an explicit answer; the kit is gone, so the honest answer is
+      // 全部 (null) — never "inherit whatever the default is today".
+      for (const [sessionId, value] of Object.entries(book.assignments)) {
+        if (value === kit.name) book.assignments[sessionId] = null
+      }
       for (const [agent, entry] of state) {
         if (entry.selection.base === BASE_KIT && entry.selection.kit === kit.name) {
           useSelection(agent, emptySelection())
         }
       }
       save()
-      return kit
+      return { kit, affected }
     },
     setDefault(input) {
       const wanted = typeof input?.name === 'string' ? input.name.trim() : ''
@@ -1322,32 +1591,36 @@ export function apply(ctx, config = {}) {
         base: { type: 'string' },
         extras: { type: 'array', items: { type: 'string' } },
         default: { type: 'string' },
+        binding: { type: 'string' },
         source: { type: 'string' },
         kits: {
           type: 'array',
           items: outputSchema({
             name: { type: 'string' },
             title: { type: 'string' },
+            note: { type: 'string' },
             tools: { type: 'array', items: { type: 'string' } },
-          }, ['name', 'title', 'tools']),
+            boundCount: { type: 'number' },
+          }, ['name', 'title', 'tools', 'boundCount']),
         },
         presets: {
           type: 'array',
           items: outputSchema({
             name: { type: 'string' },
             title: { type: 'string' },
+            note: { type: 'string' },
             tools: { type: 'array', items: { type: 'string' } },
           }, ['name', 'title', 'tools']),
         },
-      }, ['active', 'base', 'extras', 'default', 'source', 'kits', 'presets']),
+      }, ['active', 'base', 'extras', 'default', 'binding', 'source', 'kits', 'presets']),
       render: (_args, value) => text([
         `当前：${value.active === '' ? '(未设置)' : value.active}（base=${value.base}${value.extras.length > 0 ? `，加挂 ${value.extras.length} 个` : ''}）`,
         `默认套装：${value.default === '' ? '(未设置)' : value.default}`,
         `存储：${value.source}`,
         '我的套装：',
-        ...(value.kits.length === 0 ? ['- (还没有)'] : value.kits.map((kit) => `- ${kit.name} (${kit.title}): ${kit.tools.length > 0 ? kit.tools.join(', ') : '全部工具'}`)),
+        ...(value.kits.length === 0 ? ['- (还没有)'] : value.kits.map((kit) => `- ${kit.name} (${kit.title})${kit.note ? `（${kit.note}）` : ''}: ${kit.tools.length > 0 ? kit.tools.join(', ') : '全部工具'}`)),
         '预设套装（只读）：',
-        ...(value.presets.length === 0 ? ['- (无)'] : value.presets.map((kit) => `- ${kit.name} (${kit.title}): ${kit.tools.length > 0 ? kit.tools.join(', ') : '全部工具'}`)),
+        ...(value.presets.length === 0 ? ['- (无)'] : value.presets.map((kit) => `- ${kit.name} (${kit.title})${kit.note ? `（${kit.note}）` : ''}: ${kit.tools.length > 0 ? kit.tools.join(', ') : '全部工具'}`)),
       ].join('\n')),
     },
     async execute(_args, exec) {
@@ -1359,8 +1632,15 @@ export function apply(ctx, config = {}) {
         base: selection.base,
         extras: selection.extras,
         default: book.defaultKit,
+        binding: bindingOf(sessionIdOf(agent)) ?? '',
         source: book.source,
-        kits: book.kits.map((kit) => ({ name: kit.name, title: kit.title, note: kit.note ?? '', tools: rawKitAllow(kit) })),
+        kits: book.kits.map((kit) => ({
+          name: kit.name,
+          title: kit.title,
+          note: kit.note ?? '',
+          tools: rawKitAllow(kit),
+          boundCount: boundCountOf(kit.name),
+        })),
         presets: presets.map((kit) => ({ name: kit.name, title: kit.title, note: kit.note ?? '', tools: rawKitAllow(kit) })),
       }
     },
@@ -1487,20 +1767,132 @@ export function apply(ctx, config = {}) {
   ctx.tools.register({
     name: 'kit_delete',
     description: 'Remove one of my kits from the store. Presets cannot be deleted. '
-      + 'Conversations that already applied the kit fall back to 全部.',
+      + 'Conversations pinned to the kit fall back to 全部; pass dryRun to see how many first.',
     parameters: {
       type: 'object',
-      properties: { name: { type: 'string' } },
+      properties: {
+        name: { type: 'string' },
+        dryRun: { type: 'boolean', description: 'Only report affectedSessions; delete nothing.' },
+      },
       required: ['name'],
       additionalProperties: false,
     },
     output: {
-      schema: outputSchema({ name: { type: 'string' }, message: { type: 'string' } }, ['name', 'message']),
+      schema: outputSchema({
+        name: { type: 'string' },
+        affectedSessions: { type: 'number' },
+        deleted: { type: 'boolean' },
+        message: { type: 'string' },
+      }, ['name', 'affectedSessions', 'deleted', 'message']),
       render: (_args, value) => text(value.message),
     },
     async execute(args) {
-      const kit = operations.remove(args)
-      return { name: kit.name, message: `已删除套装 ${kit.name}` }
+      const dryRun = args?.dryRun === true
+      const { kit, affected } = operations.remove(args)
+      if (dryRun) {
+        return {
+          name: kit.name,
+          affectedSessions: affected,
+          deleted: false,
+          message: affected > 0
+            ? `套装 ${kit.name} 正被 ${affected} 个对话使用；删除后它们会回到「全部」。`
+            : `套装 ${kit.name} 没有对话在用，可以直接删除。`,
+        }
+      }
+      return {
+        name: kit.name,
+        affectedSessions: affected,
+        deleted: true,
+        message: affected > 0
+          ? `已删除套装 ${kit.name}；${affected} 个对话回到「全部」。`
+          : `已删除套装 ${kit.name}`,
+      }
+    },
+  })
+
+  ctx.tools.register({
+    name: 'kit_assign',
+    description: 'Pin one conversation (by Session id) to a kit, 仅内置, or 全部. '
+      + 'Normally you switch the conversation you are in with kit_apply; this is for correcting '
+      + 'another conversation whose tools were set up wrong.',
+    parameters: {
+      type: 'object',
+      properties: {
+        sessionId: { type: 'string', description: 'Target Session id.' },
+        kit: { type: 'string', description: 'Kit name or title; "@dsh" for 仅内置; "" or "全部" for 全部.' },
+      },
+      required: ['sessionId', 'kit'],
+      additionalProperties: false,
+    },
+    output: {
+      schema: outputSchema({
+        sessionId: { type: 'string' },
+        binding: { type: 'string' },
+        applied: { type: 'boolean' },
+        message: { type: 'string' },
+      }, ['sessionId', 'binding', 'applied', 'message']),
+      render: (_args, value) => text(value.message),
+    },
+    async execute(args) {
+      const sessionId = String(args?.sessionId ?? '')
+      if (sessionId === '') throw new Error('kit_assign: 缺少 sessionId')
+      const wanted = String(args?.kit ?? '').trim()
+      let value
+      if (wanted === '' || wanted === '全部' || wanted.toLowerCase() === 'all') value = null
+      else if (wanted === DEFAULT_DSH || wanted === '仅内置') value = DEFAULT_DSH
+      else {
+        const kit = resolveKit(lastAgent, wanted)
+        if (kit === undefined) throw new Error(`kit_assign: 未知套装 "${wanted}"`)
+        value = kit.name
+      }
+      book.assignments[sessionId] = value
+      save()
+      // Apply it live when that conversation is still open; otherwise the pin is
+      // picked up the next time the conversation is read.
+      let applied = false
+      if (sessionController !== undefined) {
+        try {
+          const found = await sessionController.resolveAgent(sessionId)
+          if (found?.agent !== undefined) {
+            const result = useSelection(found.agent, selectionForBinding(value))
+            applied = result.ok
+          }
+        } catch {
+          // The pin is stored; a closed conversation will read it on resume.
+        }
+      }
+      const label = value === null ? '全部' : value === DEFAULT_DSH ? '仅内置' : value
+      return {
+        sessionId,
+        binding: value ?? '',
+        applied,
+        message: `${sessionId} 现在固定使用「${label}」（${applied ? '已即时应用' : '下次打开该对话时生效'}）。`,
+      }
+    },
+  })
+
+  ctx.tools.register({
+    name: 'kit_rename',
+    description: 'Change the display title of one of my kits. The kit id stays the same, '
+      + 'so its default and every conversation pinned to it keep working.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Kit id (not the title).' },
+        title: { type: 'string', description: 'New display title.' },
+      },
+      required: ['name', 'title'],
+      additionalProperties: false,
+    },
+    output: {
+      schema: outputSchema({ name: { type: 'string' }, title: { type: 'string' }, message: { type: 'string' } }, ['name', 'title', 'message']),
+      render: (_args, value) => text(value.message),
+    },
+    async execute(args) {
+      const title = typeof args?.title === 'string' ? args.title.trim() : ''
+      if (title === '') throw new Error('kit_rename: 缺少新的标题')
+      const kit = operations.update({ name: args?.name, title })
+      return { name: kit.name, title: kit.title, message: `套装 ${kit.name} 改名为「${kit.title}」（id 不变）。` }
     },
   })
 
@@ -1637,7 +2029,18 @@ export function apply(ctx, config = {}) {
             case 'create': operations.create(body); break
             case 'update': operations.update(body); break
             case 'delete':
-            case 'remove': operations.remove(body); break
+            case 'remove': {
+              // The settings page asks with dryRun first so it can quote how many
+              // conversations a delete would release, then confirms.
+              const { kit, affected } = operations.remove(body)
+              return sendJson(res, 200, {
+                ok: true,
+                name: kit.name,
+                affectedSessions: affected,
+                deleted: body?.dryRun !== true,
+                ...snapshot(),
+              })
+            }
             case 'default': operations.setDefault(body); break
             case 'applySet': {
               // Backward compatibility for panels written against 0.5: an explicit
@@ -1747,6 +2150,9 @@ export function apply(ctx, config = {}) {
   optional(['webServer'], (child) => registerRoutes(child.webServer))
   optional(['sessionController'], (child) => {
     sessionController = child.sessionController
+  })
+  optional(['sessions'], (child) => {
+    sessions = child.sessions
   })
 
   ctx.logger?.info(`dsh-loadout: ${book.kits.length} 个我的套装 + ${presets.length} 个预设，默认 ${book.defaultKit || '(未设置)'}，来源 ${book.source}`)

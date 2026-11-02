@@ -1,6 +1,6 @@
 {
   "name": "dsh-loadout",
-  "version": "0.11.2",
+  "version": "0.12.0",
   "description": "Loadout for DeepSeek Harness: group tools into kits, keep only the current kit's tools visible in each conversation, and manage everything from a settings panel.",
   "type": "module",
   "main": "./index.js",

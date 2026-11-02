@@ -47,15 +47,12 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Presets (写作 / 调研 / 编程) are held back from this release.
-     *
-     * They still ship in `cordis.patch.yml` and `/kit 写作` still works, so they
-     * stay usable for our own testing — they are simply not rendered in the chip
-     * or the settings page, because a shipped preset that quietly hides tools is
-     * easy to mistake for a bug ("where did web_search go?"). Flip this to true
-     * to bring both lists back.
+     * Presets (仅聊天 / 编程用 / 查找资料 / 项目梳理 / 写作) are shown again from
+     * 0.12: they are the fastest way to start a conversation of a known kind,
+     * and each one now lists what it leaves out instead of silently dropping
+     * tools. They stay read-only — editing one forks it into 我的套装.
      */
-    const SHOW_PRESETS = false
+    const SHOW_PRESETS = true
 
     /**
      * Token counts are estimates (tool-definition bytes ÷ ~3.5 chars per token).
@@ -853,7 +850,9 @@ window.__ModuleLoader__.load({
           title: '装备栏：当前对话用哪一组工具',
         },
         isAll ? null : h('span', { style: styles.dot }),
-        h('span', null, label === '' ? '装备栏' : label),
+        // 全部 is the default and needs no badge: the chip only speaks up when the
+        // conversation is restricted, so an unrestricted one reads as 「装备栏」.
+        h('span', null, isAll ? '装备栏' : (label === '' ? '装备栏' : label)),
         h('span', { style: { opacity: 0.5 } }, '▾')),
         open ? h('div', {
           style: anchor === null ? styles.panel : {
@@ -1148,6 +1147,8 @@ window.__ModuleLoader__.load({
         h('div', { style: { ...styles.meta, marginTop: 4 } },
           '设置页不绑定具体会话，上面的数字来自最近活跃的那个对话；当前对话请在标题栏「装备栏」里切换。'),
         h('div', { style: styles.sectionTitle, marginTop: 14 }, '新对话默认套装'),
+        h('div', { style: { ...styles.meta, marginBottom: 6 } },
+          '只影响之后新建的对话；已经开着的对话各自保留自己的选择，这里改不到它们。'),
         // 全部 and 仅内置 are choices, not kits, but they read like the kit cards
         // below (copy the switch command / make it the default) so the page has
         // one idiom instead of two.
@@ -1227,7 +1228,20 @@ window.__ModuleLoader__.load({
                   onUse: () => copyCommand(kit.name),
                   onDefault: () => act({ action: 'default', name: kit.name }),
                   onDelete: async () => {
-                    if (!window.confirm(`删除套装「${kit.name}」？已经用它开的对话保持现状。`)) return
+                    // Ask the host how many conversations are pinned to this kit
+                    // before asking the user: "3 个对话正在用它" is a decision, and
+                    // the count is the only thing that makes the click weighable.
+                    let bound = Number(kit.boundCount ?? 0)
+                    try {
+                      const probe = await request({ action: 'delete', name: kit.name, dryRun: true, sessionId })
+                      if (typeof probe?.affectedSessions === 'number') bound = probe.affectedSessions
+                    } catch {
+                      // The count is a courtesy; a failed probe must not block the delete.
+                    }
+                    const question = bound > 0
+                      ? `删除套装「${kit.name}」？有 ${bound} 个对话正在用它，删除后它们会回到「全部」。`
+                      : `删除套装「${kit.name}」？没有对话在用它。`
+                    if (!window.confirm(question)) return
                     await act({ action: 'delete', name: kit.name })
                   },
                   onNote: (note) => act({ action: 'update', name: kit.name, note }),

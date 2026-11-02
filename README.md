@@ -6,6 +6,8 @@
 
 > 「装备栏」是这个插件本身；「套装」是栏里那几套配好的工具。一个对话选一套装备，只带用得上的工具。
 
+> **同名项目说明**：npm 上的 `dsh-loadout` 是本插件唯一的发行包。GitHub 上另有两个同名的独立项目（`YongjianWan/dsh-loadout`、`JYDW-1/dsh-loadout`），作者、功能都与本插件不同。用 `dsh plugin add dsh-loadout` 装到的一定是本插件；从 GitHub 安装时请认准 `JungleYXu/dsh-loadout`。
+
 DeepSeek Harness 的工具是全局可见的：插件装得越多，每个对话要背的工具清单越长，模型也越容易挑错工具。装备栏把工具编成**套装**，每个对话只留当前套装里的工具。
 
 ## 它做什么
@@ -14,11 +16,12 @@ DeepSeek Harness 的工具是全局可见的：插件装得越多，每个对话
 | --- | --- |
 | 三档底座 | `全部`（不裁剪，默认）/ `仅内置`（只留 DSH 自带工具）/ `我的套装` |
 | 我的套装 | 「新建套装」里勾选内置工具与插件，存成一套带名字的装备。卡片上可以**设为默认**、**复制切换命令**、**编辑**（改完覆盖保存，或另存成新的一套）、**备注**、**删除** |
+| 预置套装 | 只读五套：仅聊天 / 编程用 / 查找资料 / 项目梳理 / 写作；套用即可，改动会另存为你的套装 |
 | 加挂 | 在底座之上临时加挂插件，不必为一次性组合新建套装 |
 | 备注 | 每个套装可加 20 字备注，菜单里显示成 `测试1（用于视频制作）` |
 | token 账本 | 菜单状态行 `省 ~1.9k tokens`，设置页给出「保留 N 个工具 · 约 X tokens · 省多少」的完整账目 |
 | 刷新 | 菜单右上 `⟳` 重拉工具目录并重套用当前选择 |
-| 每对话独立 | 切换只影响当前对话，下一条消息即按新清单组装；新对话用「设置 → 装备栏」的默认套装 |
+| 每对话独立 | 每个对话把自己的选择**存下来**（`loadout.json` 的 `assignments`），重启后照旧；改默认只影响之后新建的对话 |
 
 ## 安装
 
@@ -63,23 +66,38 @@ node scripts/client-smoke.mjs # 浏览器 bundle：菜单与设置页渲染
 
 设置页没有自己的对话，所以它只管「新对话从哪套开始」，不切换当前对话——当前对话请在标题栏里切。默认列表里「全部 / 仅内置」和套装是同一种卡片：都能「复制切换命令」或「设为默认」；「我的套装」默认折叠，只显示当前默认的那一个，点开才列出全部。已经保存的套装可以在卡片上「编辑」：改动就在那张卡片下面展开，「覆盖保存」（正在用它的对话立刻按新工具集走）或「另存为新套装」。
 
-### 预置套装（界面不展示，命令仍可用）
+### 预置套装（五套，只读）
 
-> 这一节是**历史记录**，不是面向用户的功能。从 0.10.2 起，标题栏菜单和设置页都不再出现预置套装，用户看到的就是「全部 / 仅内置 / 我的套装」。三套数据仍留在 `cordis.patch.yml` 里，`/kit 写作`、`/kit 调研`、`/kit 编程` 照常可用，保留给我们自己测试；等它们足够直观再放回界面。下面的内容用于核对和排障。
+五套都是只读的，改动会另存为你的套装。它们只列**内置工具**，插件工具要靠「加挂」或另存时勾选。
 
-预置套装是只读的，改动只能另存为你的套装。它们只列**内置工具**，插件工具要靠「加挂」或在另存时勾选。
-
-| 套装 | 内置工具 |
-| --- | --- |
-| 写作 | `read` `write` `edit` `glob` `grep` + 协作五件套 |
-| 调研 | `web_search` `web_fetch` `read` `glob` `grep` + 协作五件套 |
-| 编程 | `pwsh` `read` `write` `edit` `glob` `grep` `todo_write` + 协作五件套 |
+| 套装 | 子命令 id | 内置工具 |
+| --- | --- | --- |
+| 仅聊天 | `chat` | `ask_user_question` `weather` `web_search` `web_fetch` `read` + 协作五件套 |
+| 编程用 | `coding` | `pwsh` `read` `write` `edit` `glob` `grep` `todo_write` + 协作五件套 |
+| 查找资料 | `research` | `web_search` `web_fetch` `advanced_search` `research` `platform_search` `read` `write` `glob` `grep` + 协作五件套 |
+| 项目梳理 | `plan` | `ask_user_question` `web_search` `web_fetch` `read` `write` `edit` `glob` `grep` `todo_write` + 协作五件套 |
+| 写作 | `writing` | `read` `write` `edit` `glob` `grep` + 协作五件套 |
 
 「协作五件套」= `send_message` `list_agents` `interrupt_agent` `subagent` `subagent_fork`。每套都带着它们，否则子代理切到这套之后连回话都发不出来。
 
 ### 给模型用的工具
 
-`kit_list`（列出套装与当前选择）、`kit_apply`（切到某套）、`kit_create` / `kit_set_tools` / `kit_set_default` / `kit_delete`（增删改）。这些工具在任何套装里都保留，不会把自己锁死。
+`kit_list`（列出套装、当前绑定与该套被多少对话使用）、`kit_apply`（把当前对话切到某套）、`kit_assign`（把指定对话钉到某套）、`kit_rename`（只改显示名）、`kit_create` / `kit_set_tools` / `kit_set_default` / `kit_delete`（增删改，`kit_delete` 支持 `dryRun`）。这些工具在任何套装里都保留，不会把自己锁死。
+
+## 对话的绑定
+
+每个对话有一条持久绑定，写在 `~/.dsh/loadout.json` 的 `assignments` 里：
+
+```json
+{ "assignments": { "session-abc": "coding", "session-def": null } }
+```
+
+`null` 就是「全部」。规则：
+
+- 对话第一次出现时写入一次：有新默认就记默认，从别的对话分叉出来就继承父对话，升级前就存在的旧对话记 `null`（保持当时的实际状态）。
+- 以后只有显式切换（标题栏、`/kit`、`kit_apply`、`kit_assign`）才改它。
+- 改「新对话默认套装」只影响之后新建的对话，已有对话各自保留。
+- 子代理不记录绑定：它的父对话已经决定了它能看见什么。
 
 ## 升级
 
@@ -107,7 +125,9 @@ node scripts/client-smoke.mjs # 浏览器 bundle：菜单与设置页渲染
 
 ## 文件
 
-- 套装数据：`~/.dsh/loadout.json`（旧版 `~/.dsh/plugin-kits.json` 只读一次，随后迁移）。
+- 套装与绑定：`~/.dsh/loadout.json`（`schema: 2`；`kits` 是你的套装，`assignments` 是每个对话的绑定，`defaultKit` 是新对话默认值）。
+- 从 0.11.x 升到 0.12.0 时自动迁移一次，旧文件备份为 `loadout.json.v1.bak-<时间戳>`。
+- 旧版 `~/.dsh/plugin-kits.json` 只读一次，随后迁移。
 - 卸载：`plugin_manager action=remove_bundle target=dsh-loadout`。
 
 ## 已知边界
@@ -126,6 +146,12 @@ node scripts/client-smoke.mjs # 浏览器 bundle：菜单与设置页渲染
 1. `node scripts/preflight.mjs` —— 它会直接告诉你 bundle 的工厂 id 和包名是否一致。不一致就是这一类问题。
 2. 确认安装的是**链接**不是拷贝：`preflight` 会打印 `as a link (no copy to drift)`；如果是拷贝，删掉 `node_modules/dsh-loadout` 重新 `install_bundle`。
 3. 仍不行就 `remove_bundle` 后重装并重启，别在 profile 里手工改 `package.json` / `cordis.patch.yml`。
+
+**怀疑装到了同名插件**
+
+- 看 profile 的 `package.json`：`dsh-loadout` 的值是 `link:` / `file:`，还是 registry 版本。
+- 打开 `node_modules/dsh-loadout/package.json`，`repository.url` 应当是 `github.com/JungleYXu/dsh-loadout`。不是，就说明装的是另一个同名项目。
+- 两个同名包不能共存——都占 `dsh-loadout` 这一个 key，后装的会覆盖先装的。先 `plugin_manager action=remove_bundle target=dsh-loadout`，再按本文顶部的三种方式重装。
 
 **装了但界面没有按钮 / 工具没生效**
 

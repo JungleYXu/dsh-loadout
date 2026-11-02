@@ -1,11 +1,13 @@
 # The configuration layer this bundle contributes when a profile lists it.
 #
-# `kits:` here are the shipped *presets* (写作 / 调研 / 编程). They are read-only:
-# the settings page lists them under 预设套装, and editing one forks it into a
-# user kit under `~/.dsh/loadout.json` instead of mutating the preset.
+# `kits:` here are the shipped *presets* (仅聊天 / 编程用 / 查找资料 / 项目梳理 /
+# 写作). They are read-only: the settings page lists them under 预设套装, and
+# editing one forks it into a user kit under `~/.dsh/loadout.json` instead of
+# mutating the preset.
 #
 # User kits are never written back here. They live in `~/.dsh/loadout.json`:
-#   { "kits": [ { name, title, builtins, plugins } ], "defaultKit": "" }
+#   { "schema": 2, "kits": [ { name, title, note, builtins, plugins } ],
+#     "defaultKit": "", "assignments": { "<sessionId>": "kit" | "@dsh" | null } }
 #
 # `defaultKit: ''` ships neutral: a new conversation starts on 全部 (no tool is
 # masked) until the user picks a default in 设置 → 装备栏. It may name a preset
@@ -14,8 +16,12 @@
 # Every preset carries the same five collaboration tools. Without them a
 # subagent running a preset cannot report back at all: `send_message` is how a
 # child answers its parent, and the rest are how it asks for one. They are
-# orthogonal to the preset's own subject (writing / research / coding), so each
-# list repeats them instead of relying on a YAML anchor the loader may not keep.
+# orthogonal to the preset's own subject, so each list repeats them instead of
+# relying on a YAML anchor the loader may not keep.
+#
+# `name` is a stable id (it is what a conversation's binding stores, so renaming
+# it would orphan every conversation); `title` is what the menu shows and may be
+# changed freely. `description` is the one-line summary under the title.
 #
 # Override this row from the profile's own cordis.patch.yml to change the
 # shipped presets; the row id is `loadout`.
@@ -25,35 +31,25 @@
       config:
         defaultKit: ''
         kits:
-          # 写作 / 调研 / 编程: 内置工具的名字。插件用 `plugins: [id]` 加。
-          - name: writing
-            title: 写作
+          # 仅聊天：只对话，不碰文件、不跑命令。适合纯问答和让 agent 想清楚再动手。
+          - name: chat
+            title: 仅聊天
+            description: 不读写文件、不执行命令，只做对话与查询。
             builtins:
-              - read
-              - write
-              - edit
-              - glob
-              - grep
-              - send_message
-              - list_agents
-              - interrupt_agent
-              - subagent
-              - subagent_fork
-          - name: research
-            title: 调研
-            builtins:
+              - ask_user_question
+              - weather
               - web_search
               - web_fetch
               - read
-              - glob
-              - grep
               - send_message
               - list_agents
               - interrupt_agent
               - subagent
               - subagent_fork
+          # 编程用：改代码、跑测试、记 TODO。没有网络检索，避免边改边搜分心。
           - name: coding
-            title: 编程
+            title: 编程用
+            description: 改代码、跑命令、跑测试；不含搜索类工具。
             builtins:
               - pwsh
               - read
@@ -62,6 +58,59 @@
               - glob
               - grep
               - todo_write
+              - send_message
+              - list_agents
+              - interrupt_agent
+              - subagent
+              - subagent_fork
+          # 查找资料：多种检索入口 + 落盘笔记，适合调研与写报告。
+          - name: research
+            title: 查找资料
+            description: 多路检索（网页 / 平台 / 深度研究）并落盘成笔记。
+            builtins:
+              - web_search
+              - web_fetch
+              - advanced_search
+              - research
+              - platform_search
+              - read
+              - write
+              - glob
+              - grep
+              - send_message
+              - list_agents
+              - interrupt_agent
+              - subagent
+              - subagent_fork
+          # 项目梳理：读得多、写得少，先问清楚再整理成文档。
+          - name: plan
+            title: 项目梳理
+            description: 读代码与文档、问清目标，整理成方案或清单。
+            builtins:
+              - ask_user_question
+              - web_search
+              - web_fetch
+              - read
+              - write
+              - edit
+              - glob
+              - grep
+              - todo_write
+              - send_message
+              - list_agents
+              - interrupt_agent
+              - subagent
+              - subagent_fork
+          # 写作：只动文字类文件，适合长文、润色、翻译。
+          - name: writing
+            title: 写作
+            description: 读写与检索文本，适合长文、润色与翻译。
+            builtins:
+              - read
+              - write
+              - edit
+              - glob
+              - grep
               - send_message
               - list_agents
               - interrupt_agent

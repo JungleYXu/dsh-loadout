@@ -4,6 +4,8 @@
 
 > **Loadout** is the plugin. A **kit** is one prepared set of tools. Pick one kit per conversation and carry only the tools that conversation needs.
 
+> **About the name**: `dsh-loadout` on npm is this plugin's only distribution package. Two unrelated GitHub projects share the name — `YongjianWan/dsh-loadout` and `JYDW-1/dsh-loadout` — with different authors and different behaviour. `dsh plugin add dsh-loadout` always installs this plugin; when installing from GitHub, use `JungleYXu/dsh-loadout`.
+
 [中文说明](README.md) · [Changelog](CHANGELOG.md) · MIT
 
 DeepSeek Harness exposes every tool to every conversation: the more plugins you install, the longer the tool list each turn has to carry, and the easier it is for the model to reach for the wrong tool. Loadout groups tools into **kits** and keeps only the current kit's tools visible in that conversation.
@@ -63,27 +65,26 @@ node scripts/client-smoke.mjs # browser bundle: menu and settings panel render
 
 Settings has no conversation of its own, so it only decides *where new conversations start* — use the header button to change the current one. In the default list, `All` / `Built-in only` and kits are the same kind of card: each can copy its switch command or be set as default. **My kits** starts collapsed and shows only the current default; open it to see the rest. A saved kit can be **edited** on its card: the form opens under that card, and you either overwrite it (conversations already using it switch immediately) or save as a new kit.
 
-### Shipped presets (not shown in the UI, still selectable by command)
+### Shipped presets (five, read-only)
+Five read-only presets. Editing one forks it into one of your kits.
 
-> This section is a **historical record**, not a user-facing feature. Since 0.10.2 neither the header menu nor Settings shows the presets; what users see is `All` / `Built-in only` / `My kits`. The three entries still live in `cordis.patch.yml` and `/kit writing`, `/kit research`, `/kit coding` keep working — they are kept for our own testing until they are clear enough to put back in the UI. The table below is for review and troubleshooting.
-
-The presets are read-only; an edit can only become a copy of your own. They list **built-in tools only** — plugin tools come in through add-ons or by saving your own kit.
-
-| Preset | Built-in tools |
-| --- | --- |
-| Writing | `read` `write` `edit` `glob` `grep` + collaboration five |
-| Research | `web_search` `web_fetch` `read` `glob` `grep` + collaboration five |
-| Coding | `pwsh` `read` `write` `edit` `glob` `grep` `todo_write` + collaboration five |
+| Preset | Command id | Built-in tools |
+| --- | --- | --- |
+| Chat only | `chat` | `ask_user_question` `weather` `web_search` `web_fetch` `read` + collaboration five |
+| Coding | `coding` | `pwsh` `read` `write` `edit` `glob` `grep` `todo_write` + collaboration five |
+| Research | `research` | `web_search` `web_fetch` `advanced_search` `research` `platform_search` `read` `write` `glob` `grep` + collaboration five |
+| Planning | `plan` | `ask_user_question` `web_search` `web_fetch` `read` `write` `edit` `glob` `grep` `todo_write` + collaboration five |
+| Writing | `writing` | `read` `write` `edit` `glob` `grep` + collaboration five |
 
 "Collaboration five" = `send_message` `list_agents` `interrupt_agent` `subagent` `subagent_fork`. Every preset carries them, otherwise a subagent switched to that preset cannot even report back.
 
 ### Tools for the model
 
-`kit_list` (kits and the current selection), `kit_apply` (switch), `kit_create` / `kit_set_tools` / `kit_set_default` / `kit_delete` (manage). These are kept in every kit, so a kit can never lock the model out of switching back.
+`kit_list` (kits, current binding, how many conversations each kit holds), `kit_apply` (switch this conversation), `kit_assign` (pin a specific conversation), `kit_rename` (display name only), `kit_create` / `kit_set_tools` / `kit_set_default` / `kit_delete` (manage; `kit_delete` accepts `dryRun`). These are kept in every kit, so a kit can never lock the model out of switching back.
 
 ## Upgrading
 
-- 0.5.x → 0.11.x: same package name (`dsh-loadout`); run `plugin_manager install_bundle` over it. Kits live in `~/.dsh/loadout.json` and are untouched.
+- 0.11.x → 0.12.x: same package name; install over it. The store migrates to `schema: 2` once, with a `loadout.json.v1.bak-<ts>` backup, and every existing conversation is pinned to 全部 so a default change cannot reach back into it.
 - 0.4.x → 0.11.x: the package was renamed from `dsh-plugin-kits`; remove the old one first:
 
   ```text
@@ -125,6 +126,12 @@ The client bundle failed to register its factory, and the boot audit treats any 
 1. `node scripts/preflight.mjs` — it reports whether the bundle's factory id matches the package name. A mismatch is this class of failure.
 2. Confirm the install is a **link**, not a copy: `preflight` prints `as a link (no copy to drift)`. If it is a copy, delete `node_modules/dsh-loadout` and `install_bundle` again.
 3. Otherwise `remove_bundle`, reinstall, restart. Do not hand-edit `package.json` / `cordis.patch.yml` inside the profile.
+
+**Suspect you installed the other plugin with the same name**
+
+- Check the profile's `package.json`: is `dsh-loadout` a `link:` / `file:`, or a registry version?
+- Open `node_modules/dsh-loadout/package.json`; `repository.url` should be `github.com/JungleYXu/dsh-loadout`. If it is not, you installed a different project that shares the name.
+- Two same-named packages cannot coexist — both claim the `dsh-loadout` key, and the later install replaces the earlier one. Run `plugin_manager action=remove_bundle target=dsh-loadout`, then reinstall using one of the three sources at the top of this README.
 
 **Installed, but no button / tools unchanged**
 
