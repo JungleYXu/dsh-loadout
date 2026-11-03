@@ -1114,7 +1114,7 @@ window.__ModuleLoader__.load({
           title: '加挂',
           count: extras.length,
           open: groups.extras,
-          tip: '在当前选择之上临时加开插件，不新建套装。已经包含的插件不能再加。',
+          tip: '在当前选择之上临时加开插件，不新建套装。已经包含的插件不能再加；加挂同样会改写工具定义，下一条消息要按未命中重新算一次。',
           onToggle: () => setGroups({ ...groups, extras: !groups.extras }),
           action: extras.length === 0
             ? null
