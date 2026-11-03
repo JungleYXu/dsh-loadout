@@ -1242,7 +1242,7 @@ window.__ModuleLoader__.load({
           onSave: () => saveBuilder('apply'),
           onSaveKeep: () => saveBuilder('keep'),
           saveLabel: '保存并启用',
-          saveTip: '保存后立刻切换到这个套装：工具清单会变，这个对话下一条消息要按未命中价重新计算一次。',
+          saveTip: '工具清单会变，这个对话下一条消息要按未命中价重新计算一次。',
           clash: nameClash(builder.name, presets, kits, null),
         })
 
@@ -1561,11 +1561,9 @@ window.__ModuleLoader__.load({
         // the most recently seen agent, so the ledger above is that conversation's.
         h('div', { style: styles.sectionTitle, marginTop: 14 }, '新对话默认套装'),
         h('div', { style: { ...styles.meta, marginBottom: 6 } },
-          // One clause per line: a wrapped sentence broke in the middle of
-          // 「切换」/「对话套装」 on narrow panels, which read like a typo.
-          h('div', null, '只影响之后新建的对话。'),
-          h('div', null, '单独对话请在标题栏「装备栏」切换。'),
-          h('div', null, '新建对话时也可选择对话套装。')),
+          // One line: the panel is 370px wide, so the sentence is abbreviated
+          // rather than wrapped — a two-line note here looked like two notes.
+          '只影响新建对话；当前对话在「装备栏」切换；新建时也可选套装。'),
         // 全部 and 仅内置 are choices, not kits, but they read like the kit cards
         // below (copy the switch command / make it the default) so the page has
         // one idiom instead of two.

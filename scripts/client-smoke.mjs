@@ -319,7 +319,7 @@ if (menu !== undefined) {
     source.includes("onSaveKeep: () => saveBuilder('keep')"), 'no 保存 button next to 保存并启用')
   check('the builder labels the switching button', source.includes("saveLabel: '保存并启用'"))
   check('the switching button warns it rewrites the tools',
-    source.includes('保存后立刻切换到这个套装'), '保存并启用 has no hover text')
+    source.includes('工具清单会变，这个对话下一条消息要按未命中价重新计算一次'), '保存并启用 has no hover text')
   const keepBranch = source.slice(source.indexOf("if (mode === 'keep')"), source.indexOf('const appliedKit'))
   check('save-only leaves the current selection alone', keepBranch.includes('return'), keepBranch.slice(0, 200))
 }
@@ -556,7 +556,8 @@ try {
   // 全部 / 仅内置 sit in the same list as the kits, so they are rendered as cards
   // with the same two actions; presets are read-only and carry no save-as button.
   // The default section says out loud that it cannot reach an open conversation.
-  check('settings says the default only affects new conversations', panelText.includes('只影响之后新建的对话'), panelText.slice(0, 400))
+  check('settings says the default only affects new conversations',
+    panelText.includes('只影响新建对话') && panelText.includes('当前对话在「装备栏」切换'), panelText.slice(0, 400))
   const copyButtons = nodesIn(panel, (node) => node.type === 'button' && textOf(node) === '复制切换命令')
   const defaultButtons = nodesIn(panel, (node) => node.type === 'button' && textOf(node) === '设为默认')
   // 2 defaults + 3 presets + 2 user kits — every card carries both actions.
@@ -574,9 +575,9 @@ try {
   check('settings explains the numbers are the last live conversation\'s',
     panelText.includes('设置页不绑定具体会话，上面的数字来自最近活跃的那个对话'), panelText.slice(0, 300))
   check('settings says where a single conversation is switched',
-    panelText.includes('单独对话请在标题栏「装备栏」切换'), panelText.slice(0, 300))
+    panelText.includes('当前对话在「装备栏」切换'), panelText.slice(0, 300))
   check('settings names the other two places a kit can be chosen',
-    panelText.includes('新建对话时也可选择对话套装'), panelText.slice(0, 300))
+    panelText.includes('新建时也可选套装'), panelText.slice(0, 300))
 
   // Presets start collapsed, and while collapsed they behave like 我的套装: the
   // one that is the default stays visible so the page still answers "a new
