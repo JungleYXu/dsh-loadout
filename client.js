@@ -582,7 +582,10 @@ window.__ModuleLoader__.load({
       const preview = props.preview ?? null
       const [data, setData] = useState(preview?.data ?? null)
       const [busy, setBusy] = useState(false)
-      const [message, setMessage] = useState('')
+      // What the hover sentence says once a pick has landed (or why it failed);
+      // the row itself never grows a message line.
+      const [picked, setPicked] = useState(false)
+      const [failed, setFailed] = useState('')
       // Collapsed by default: the picker answers "which kit will this
       // conversation start with", and the list is what you open to change it.
       const [open, setOpen] = useState(preview?.open === true)
@@ -632,13 +635,13 @@ window.__ModuleLoader__.load({
       const pick = async (name) => {
         if (busy || typeof sessionId !== 'string' || sessionId === '') return
         setBusy(true)
-        setMessage('')
+        setFailed('')
         try {
           setData(await request({ action: 'bind', sessionId, name }))
           setOpen(false)
-          setMessage(`这个对话会用「${labelOf(name)}」，下一条消息生效`)
+          setPicked(true)
         } catch (error) {
-          setMessage(String(error?.message ?? error))
+          setFailed(String(error?.message ?? error))
         } finally {
           setBusy(false)
         }
@@ -671,11 +674,14 @@ window.__ModuleLoader__.load({
         onClick: () => pick(kit.name),
       })
 
-      // The sentence lives on hover, not on the row: this line is shared with the
-      // permission and plan chips, so the control itself only says 套装 + name.
-      const tipText = message !== ''
-        ? `选择你的新对话套装：${message}`
-        : `选择你的新对话套装：这个对话会用「${labelOf(current)}」`
+      // The sentence lives on hover, not on the row: the composer line is shared
+      // with the permission and plan chips, so the control only says what it is
+      // plus the current pick.
+      const tipText = failed !== ''
+        ? failed
+        : picked
+          ? `这个对话会用「${labelOf(current)}」套装，下一条消息生效`
+          : `这个新对话会用「${labelOf(current)}」套装`
 
       return h('span', { ref: box, style: styles.pickWrap, 'data-loadout': 'kit-pick' },
         h('button', {
@@ -686,7 +692,7 @@ window.__ModuleLoader__.load({
           title: tipText,
           onClick: () => setOpen(!open),
         },
-        h('span', { style: styles.chipMuted }, '套装'),
+        h('span', { style: styles.chipMuted }, '选择对话套装'),
         h('span', { style: styles.chipStrong }, labelOf(current)),
         h('span', { style: styles.caret }, open ? '▾' : '▸')),
         open
@@ -1747,11 +1753,12 @@ window.__ModuleLoader__.load({
         }, HeaderMenu)
         // The new-conversation picker: the one moment where switching is free,
         // because the agent — and its first request — does not exist yet. It sits
-        // in the composer's tool row (next to 权限/计划, i.e. beside 标准模式),
-        // which is mounted in both phases — so it gates itself on `blank`.
+        // at the front of the composer's right-hand tool group, i.e. immediately
+        // to the right of the 标准模式 selector, and that row is mounted in both
+        // phases — so the component gates itself on `blank`.
         registerSurface(ctx, {
-          name: 'conversation.input.left',
-          order: 5,
+          name: 'conversation.input.right',
+          order: -10,
           // Session-scoped slots get their Session id through `inject`; without
           // it the picker could neither read this conversation's binding nor
           // write one.

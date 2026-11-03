@@ -45,7 +45,7 @@ const React = {
 
 const registrations = []
 let injections = 0
-const SLOTS = ['settings.section', 'conversation.session.header.actions', 'conversation.input.left']
+const SLOTS = ['settings.section', 'conversation.session.header.actions', 'conversation.input.right']
 
 const slots = {
   inject(name, callback) {
@@ -102,7 +102,7 @@ check('three surfaces registered', registrations.length === 3, String(registrati
 
 const registration = registrations.find((entry) => entry.definition?.name === 'settings.section')
 const header = registrations.find((entry) => entry.definition?.name === 'conversation.session.header.actions')
-const hero = registrations.find((entry) => entry.definition?.name === 'conversation.input.left')
+const hero = registrations.find((entry) => entry.definition?.name === 'conversation.input.right')
 check('settings panel registered', registration !== undefined)
 check('header chip registered', header !== undefined)
 check('new-conversation picker registered', hero !== undefined)
@@ -365,17 +365,17 @@ if (pricedMenu !== undefined) {
 // This is the one place a switch is free: the agent does not exist yet, so no
 // request prefix has been built and nothing can be re-billed.
 try {
-  // Collapsed, the chip names the kit and keeps the sentence for the tooltip:
+  // Collapsed, the chip says what it is and keeps the sentence for the tooltip:
   // the composer row is shared with 权限/计划 and has no room for prose.
   const collapsed = expand(hero.component({ sessionId: 'session-new', preview: { blank: true, data: fixture } }))
   const collapsedText = textOf(collapsed)
-  check('the chip names the kit this conversation will start with',
-    collapsedText.includes('套装') && collapsedText.includes('我的套'), collapsedText)
-  check('the sentence is not printed on the row', !collapsedText.includes('选择你的新对话套装'), collapsedText)
-  const tipButton = nodesIn(collapsed, (node) => typeof node.props?.title === 'string' && node.props.title.includes('选择你的新对话套装'))
+  check('the chip says what it chooses and names the kit',
+    collapsedText.includes('选择对话套装') && collapsedText.includes('我的套'), collapsedText)
+  check('the sentence is not printed on the row', !collapsedText.includes('这个新对话会用'), collapsedText)
+  const tipButton = nodesIn(collapsed, (node) => typeof node.props?.title === 'string' && node.props.title.includes('这个新对话会用'))
   check('the sentence rides on the chip as its tooltip', tipButton.length === 1, JSON.stringify(nodesIn(collapsed, (node) => node.props?.title)))
-  check('the tooltip says which kit will be used',
-    String(tipButton[0]?.props?.title ?? '').includes('我的套'), String(tipButton[0]?.props?.title))
+  check('the tooltip reads as a sentence about this conversation',
+    tipButton[0]?.props?.title === '这个新对话会用「我的套」套装', String(tipButton[0]?.props?.title))
 
   // With no default set, the collapsed label is 全部.
   const noDefault = expand(hero.component({
@@ -567,7 +567,7 @@ check('apply survives a missing slot', applyError === undefined, String(applyErr
 check('the remaining surfaces still register',
   keptRegistrations.length === 2
     && keptRegistrations.some((entry) => entry.name === 'settings.section')
-    && keptRegistrations.some((entry) => entry.name === 'conversation.input.left'),
+    && keptRegistrations.some((entry) => entry.name === 'conversation.input.right'),
   JSON.stringify(keptRegistrations.map((entry) => entry.name)))
 
 if (failures.length === 0) {

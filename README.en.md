@@ -121,7 +121,7 @@ If you do not want to pay it now, click **`下次对话`** at the end of the row
 
 ## Picking a kit for a new conversation
 
-A blank conversation's composer tool row (beside the permission chip, i.e. 标准模式) carries a small `套装: <current pick> ▾` pill. Hovering it spells out "选择你的新对话套装: this conversation will use X", and after a pick adds "…, from the next message". Opening it shows a folded list that floats upward — `全部`, `仅内置`, `预设套装`, `我的套装` — where the two kit groups start collapsed and list their entries only when opened. The name on the pill is the answer to "which kit will this conversation actually use": the default kit when one is set, otherwise `全部`. The pick takes effect from the first message, and the whole pill disappears once the conversation has one.
+A blank conversation's composer tool row, immediately to the right of the 标准模式 selector, carries a small `选择对话套装　<current pick> ▾` pill. Hovering says "这个新对话会用「X」套装"; after a pick it reads "这个对话会用「X」套装，下一条消息生效". Opening it shows a folded list that floats upward — `全部`, `仅内置`, `预设套装`, `我的套装` — where the two kit groups start collapsed and list their entries only when opened. The name on the pill is the answer to "which kit will this conversation actually use": the default kit when one is set, otherwise `全部`. The pick takes effect from the first message, and the whole pill disappears once the conversation has one.
 
 This is the one switch that is genuinely free: there is no agent yet, so no request prefix exists and the tool definitions cannot invalidate anything. Picking here is cheaper than switching after the first message.
 
