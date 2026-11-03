@@ -217,6 +217,7 @@ const fixture = {
     visibleTools: 12, visibleTokens: 860,
     totalTools: 31, totalTokens: 2410, savedTokens: 1550, unpriced: 0,
   },
+  baseTokens: { all: 2410, dsh: 1640 },
 }
 
 let menu
@@ -342,20 +343,31 @@ try {
 if (pricedMenu !== undefined) {
   const pricedText = textOf(pricedMenu)
   check('the status line states the context size', pricedText.includes('上下文 ~200k'), pricedText.slice(0, 300))
-  check('an inactive kit quotes one switch', pricedText.includes('≈¥0.30'), pricedText.slice(0, 900))
+  // Every row states the tool table it would install. That is what differs
+  // between 全部 / 仅内置 / each kit; the switch bill is the same number for all
+  // of them, so it lives once in the footer instead of on every row.
+  check('an inactive kit states its tool tokens', pricedText.includes('≈420 tokens'), pricedText.slice(0, 900))
   const activePriced = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' && textOf(node).includes('我的套'))
-  check('the kit already in use quotes no price', !textOf(activePriced[0]).includes('≈¥'), textOf(activePriced[0]))
+  check('the kit already in use still states its tokens', textOf(activePriced[0]).includes('≈860 tokens'), textOf(activePriced[0]))
+  check('the default kit is marked after its name', textOf(activePriced[0]).includes('（默认）'), textOf(activePriced[0]))
 
-  // 全部 and 仅内置 are one click away from a full re-bill too, so they carry the
-  // same number as the kits do.
+  // 全部 and 仅内置 pay for different tool tables, and that difference is the
+  // reason to pick one over the other.
   const allRow = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' && textOf(node).trim().startsWith('全部'))
-  check('全部 quotes the same one-switch price', allRow.length === 1 && textOf(allRow[0]).includes('≈¥0.30'), JSON.stringify(allRow.map(textOf)))
+  check('全部 states its tool tokens', allRow.length === 1 && textOf(allRow[0]).includes('≈2.4k tokens'), JSON.stringify(allRow.map(textOf)))
+  const dshRow = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' && textOf(node).trim().startsWith('仅内置'))
+  check('仅内置 states its own, smaller tool table', dshRow.length === 1 && textOf(dshRow[0]).includes('≈1.6k tokens'), JSON.stringify(dshRow.map(textOf)))
 
   // The bill is stated once, under the reminder — not per row. A tooltip has to
   // be found; the reminder is the paragraph people actually read.
   check('the footer states the bill under the reminder',
     pricedText.includes('本对话上下文（约 200k tokens），下一条未命中价≈¥0.30，之后恢复至缓存价。'),
     pricedText.slice(-400))
+  // The bill is the one line people are meant to notice; at 11px grey it read as
+  // a footnote to the reminder above it.
+  const billLine = nodesIn(pricedMenu, (node) => node.type === 'div' &&
+    node.props?.style?.fontWeight === 600 && textOf(node).includes('本对话上下文'))
+  check('the bill line is bold and dark', billLine.length === 1, `${billLine.length}`)
   const rowsWithOldTip = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' &&
     typeof node.props?.title === 'string' && node.props.title.includes('按未命中价重新计算'))
   check('no row repeats the bill as a tooltip', rowsWithOldTip.length === 0,
@@ -380,6 +392,7 @@ if (pricedMenu !== undefined) {
   const shortText = textOf(shortMenu)
   const shortRows = nodesIn(shortMenu, (node) => node.props?.role === 'menuitem').map(textOf).join('|')
   check('a short conversation quotes no price on the rows', !shortRows.includes('≈¥'), shortRows.slice(0, 400))
+  check('a short conversation still states tool tokens', shortRows.includes('≈860 tokens'), shortRows.slice(0, 400))
   // The footer does not use that floor: it is one line whether the number is
   // ¥0.008 or ¥0.30, and it is the sentence that explains the rows.
   check('the footer still states the bill, however small',
@@ -404,11 +417,13 @@ if (pricedMenu !== undefined) {
   const fullText = textOf(fullMenu)
   check('加挂 reads full under 全部', fullText.includes('加挂（2/2）'), fullText.slice(0, 300))
   const fullRows = nodesIn(fullMenu, (node) => node.props?.role === 'menuitem')
+  // Under 全部 the pair still states two different tool tables: that is the only
+  // thing separating "hand me everything" from "hand me the built-ins".
   const pricedBase = ['全部', '仅内置'].filter((label) => {
     const row = fullRows.find((node) => textOf(node).replace(/^[\s✓]+/, '').startsWith(label))
-    return row !== undefined && textOf(row).includes('≈¥')
+    return row !== undefined && textOf(row).includes('≈') && textOf(row).includes('tokens')
   })
-  check('both base rows quote a price, even the one in use', pricedBase.length === 2,
+  check('both base rows state their tool tokens, even the one in use', pricedBase.length === 2,
     JSON.stringify(fullRows.map(textOf)))
 }
 
@@ -558,6 +573,14 @@ try {
   // The default section says out loud that it cannot reach an open conversation.
   check('settings says the default only affects new conversations',
     panelText.includes('只影响新建对话') && panelText.includes('当前对话在「装备栏」切换'), panelText.slice(0, 400))
+  // The title and its caveat are one thought; the note sits beside the heading
+  // instead of becoming a paragraph of its own above the cards.
+  check('the default heading carries its caveat on the same line',
+    panelText.includes('新对话默认套装只影响新建对话'), panelText.slice(0, 400))
+  // 全部 / 仅内置 are the only two cards that had no number; they price their own
+  // tool tables, which is also what the header menu's rows now show.
+  check('the base cards state their tool tokens',
+    panelText.includes('≈2.4k tokens') && panelText.includes('≈1.6k tokens'), panelText.slice(0, 500))
   const copyButtons = nodesIn(panel, (node) => node.type === 'button' && textOf(node) === '复制切换命令')
   const defaultButtons = nodesIn(panel, (node) => node.type === 'button' && textOf(node) === '设为默认')
   // 2 defaults + 3 presets + 2 user kits — every card carries both actions.

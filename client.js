@@ -123,25 +123,9 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * `≈¥0.23` for one switch at this prompt size, or `''` when it is too
-     * small to be worth a number. Always approximate: the prompt size is a
-     * provider-reported anchor plus a heuristic delta, and the price is a
-     * setting, not a quote.
-     */
-    function switchPrice(tokens, prices) {
-      const n = Number(tokens)
-      if (!Number.isFinite(n) || n < PRICE_MIN_TOKENS) return ''
-      const extra = Math.max(0, prices.miss - prices.hit)
-      const yuan = (n / 1e6) * extra
-      if (yuan < 0.005) return ''
-      return `≈¥${yuan < 0.1 ? yuan.toFixed(3) : yuan.toFixed(2)}`
-    }
-
-    /**
-     * The same estimate without the "too small to mention" floor. The row
-     * labels stay quiet below 20k, but the footer states the bill for every
-     * conversation: it is the sentence that explains what those labels mean,
-     * and it costs one line whether the number is 0.001 or 0.23.
+     * The bill for one switch. The floor that kept row labels quiet is gone —
+     * rows no longer quote money at all (they quote tool tokens), so the footer
+     * is the only place the number appears and it always appears there.
      */
     function switchCost(tokens, prices) {
       const n = Number(tokens)
@@ -264,7 +248,7 @@ window.__ModuleLoader__.load({
       warnLine: { marginTop: 6, color: '#b45309', opacity: 0.95, lineHeight: 1.6 },
       // The bill, stated once under the reminder: quieter than the warning
       // because it explains the numbers rather than asking for anything.
-      billLine: { marginTop: 4, opacity: 0.75, lineHeight: 1.6 },
+      billLine: { marginTop: 4, fontWeight: 600, color: '#111827', lineHeight: 1.6 },
       error: { fontSize: 11, color: '#dc2626', marginTop: 6, lineHeight: 1.5 },
       notice: { fontSize: 11, color: '#2563eb', marginTop: 6, lineHeight: 1.5 },
       input: {
@@ -875,7 +859,6 @@ window.__ModuleLoader__.load({
       // Prompt size comes from the host's `contextPressure` projection; it is
       // null until this conversation has sent its first request.
       const contextTokens = Number(data?.context?.tokens) || 0
-      const price = switchPrice(contextTokens, prices)
       // One sentence for the bill, stated for every conversation size. The same
       // text a tooltip used to carry per row — moved here because the rows are
       // read at a glance and the reminder under them is what people act on.
@@ -889,10 +872,21 @@ window.__ModuleLoader__.load({
        * from is a global decision and lives in 设置 → 装备栏 (`defaultKit`).
        */
 
-      /** `默认 · ≈¥0.23`, and nothing at all when the switch is not worth a warning. */
-      const rowHint = (parts, active) => parts
-        .concat(active || price === '' ? [] : [price])
-        .filter((part) => part !== undefined && part !== '')
+      /**
+       * A row's weight in the prompt: the tool definitions it would install.
+       *
+       * The price of *switching* is one number for the whole conversation — it
+       * depends on how long the conversation is, not on which kit you pick — so
+       * printing it on every row made 全部, 仅内置 and each kit read identically.
+       * The rows differ in how many tokens of tools they add, and that is what
+       * these hints now say; the bill itself sits once, under the reminder.
+       */
+      const toolTokens = (entry) => (Number.isFinite(entry?.tokens) ? `≈${formatTokens(entry.tokens)} tokens` : '')
+      const withDefault = (label, isDefault) => (isDefault ? `${label}（默认）` : label)
+
+      /** `≈2.4k tokens · 只读`, and nothing at all when the row has no price. */
+      const rowHint = (parts) => parts
+        .filter((part) => part !== undefined && part !== '' && part !== false)
         .join(' · ')
 
       const run = async (payload) => {
@@ -1039,19 +1033,19 @@ window.__ModuleLoader__.load({
             onClick: () => { run({ action: 'refresh' }) },
           }, '⟳')),
         h(MenuRow, {
-          label: '全部',
+          label: withDefault('全部', (data?.defaultKit ?? '') === ''),
           tip: '不裁剪：Harness 自带工具和所有已启用插件的工具都能用。',
-          // Both base rows quote a price even while one of them is in use: they
-          // are the two "hand me everything / hand me nothing extra" choices,
-          // and leaving one blank made the pair look broken rather than free.
-          hint: rowHint(['不限制'], false),
+          // Both base rows pay for their own tool table: 全部 installs every
+          // tool there is, 仅内置 only the built-in ones. That difference is the
+          // reason to pick one over the other, so both rows state it.
+          hint: rowHint([toolTokens({ tokens: data?.baseTokens?.all })]),
           active: isAll,
           onClick: () => run({ action: 'applyBase', base: 'all' }),
         }),
         h(MenuRow, {
-          label: '仅内置',
+          label: withDefault('仅内置', (data?.defaultKit ?? '') === '@dsh'),
           tip: '只保留 Harness 自带的工具，下载插件的工具全部隐藏。',
-          hint: rowHint(['隐藏插件'], false),
+          hint: rowHint([toolTokens({ tokens: data?.baseTokens?.dsh })]),
           active: isDsh,
           onClick: () => run({ action: 'applyBase', base: 'dsh' }),
         }),
@@ -1075,8 +1069,8 @@ window.__ModuleLoader__.load({
         // creates a set — so "new kit" never needs a click on the head first.
         activeUserKit === undefined ? null : h(MenuRow, {
           key: 'active-kit',
-          label: kitLabel(activeUserKit),
-          hint: rowHint([activeUserKit.isDefault ? '默认' : ''], true),
+          label: withDefault(kitLabel(activeUserKit), activeUserKit.isDefault),
+          hint: rowHint([toolTokens(activeUserKit)]),
           active: true,
           indent: true,
           onClick: () => run({ action: 'applyBase', base: 'kit', kit: activeUserKit.name }),
@@ -1086,8 +1080,8 @@ window.__ModuleLoader__.load({
             .filter((kit) => activeUserKit === undefined || kit.name !== activeUserKit.name)
             .map((kit) => h(MenuRow, {
               key: kit.name,
-              label: kitLabel(kit),
-              hint: rowHint([kit.isDefault ? '默认' : ''], false),
+              label: withDefault(kitLabel(kit), kit.isDefault),
+              hint: rowHint([toolTokens(kit)]),
               indent: true,
               onClick: () => {
                 run({ action: 'applyBase', base: 'kit', kit: kit.name })
@@ -1120,8 +1114,8 @@ window.__ModuleLoader__.load({
         SHOW_PRESETS === true && groups.presets !== true && activePreset !== undefined
           ? h(MenuRow, {
             key: 'active-preset',
-            label: activePreset.title,
-            hint: '只读',
+            label: withDefault(activePreset.title, data?.defaultKit === activePreset.name),
+            hint: rowHint([toolTokens(activePreset), '只读']),
             active: true,
             indent: true,
             onClick: () => run({ action: 'applyBase', base: 'kit', kit: activePreset.name }),
@@ -1132,8 +1126,8 @@ window.__ModuleLoader__.load({
             ? h('div', { key: 'none', style: { ...styles.meta, padding: '2px 6px' } }, '没有预置套装')
             : presets.map((preset) => h(MenuRow, {
               key: preset.name,
-              label: preset.title,
-              hint: rowHint(['只读'], activePreset !== undefined && activePreset.name === preset.name),
+              label: withDefault(preset.title, data?.defaultKit === preset.name),
+              hint: rowHint([toolTokens(preset), '只读']),
               active: activePreset !== undefined && activePreset.name === preset.name,
               indent: true,
               onClick: () => {
@@ -1281,10 +1275,15 @@ window.__ModuleLoader__.load({
     // settings list they sit next to kits, and two actions make sense for them:
     // copy the command that switches a conversation, or make them the default.
     function DefaultCard(props) {
-      const { title, description, isDefault, onUse, onDefault } = props
+      const { title, description, isDefault, tokens, onUse, onDefault } = props
       return h('div', { style: styles.card },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
           h('strong', null, title),
+          // Same unit as the kit cards: what this choice costs in tools. Without
+          // it 全部 and 仅内置 were the only two cards in the page with no number.
+          Number.isFinite(tokens)
+            ? h('span', { style: styles.meta, title: '按工具定义估算（约 3.5 字符 / token）' }, `≈${formatTokens(tokens)} tokens`)
+            : null,
           isDefault ? h('span', { style: { ...styles.meta, color: '#2563eb' } }, '默认') : null,
           h('span', { style: { flex: 1 } }),
           h('button', { type: 'button', style: styles.ghost, onClick: onUse }, '复制切换命令'),
@@ -1559,11 +1558,15 @@ window.__ModuleLoader__.load({
             ].join('　·　')),
         // This panel has no Session of its own: the host answers a bare GET from
         // the most recently seen agent, so the ledger above is that conversation's.
-        h('div', { style: styles.sectionTitle, marginTop: 14 }, '新对话默认套装'),
+        h('div', { style: { ...styles.sectionTitle, marginTop: 14, display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' } },
+          h('span', null, '新对话默认套装'),
+          // Beside the title, not under it: "新对话默认套装" and "只影响新建对话"
+          // are one thought, and splitting them made the note look like it
+          // belonged to the list below.
+          h('span', { style: styles.meta }, '只影响新建对话')),
         h('div', { style: { ...styles.meta, marginBottom: 6 } },
-          // One line: the panel is 370px wide, so the sentence is abbreviated
-          // rather than wrapped — a two-line note here looked like two notes.
-          '只影响新建对话；当前对话在「装备栏」切换；新建时也可选套装。'),
+          // The rest of the sentence stays abbreviated for the 370px panel.
+          '当前对话在「装备栏」切换；新建时也可选套装。'),
         // 全部 and 仅内置 are choices, not kits, but they read like the kit cards
         // below (copy the switch command / make it the default) so the page has
         // one idiom instead of two.
@@ -1571,6 +1574,7 @@ window.__ModuleLoader__.load({
           h(DefaultCard, {
             title: '全部',
             description: '内置工具和已启用插件的工具都能用。',
+            tokens: data.baseTokens?.all,
             isDefault: defaultIsAll,
             onUse: () => copyCommand('全部'),
             onDefault: () => act({ action: 'default', name: '' }),
@@ -1578,6 +1582,7 @@ window.__ModuleLoader__.load({
           h(DefaultCard, {
             title: '仅内置',
             description: '只带 Harness 内置的工具，下载插件的工具默认隐藏。',
+            tokens: data.baseTokens?.dsh,
             isDefault: defaultIsDsh,
             onUse: () => copyCommand('仅内置'),
             onDefault: () => act({ action: 'default', name: '@dsh' }),

@@ -1522,6 +1522,16 @@ export function apply(ctx, config = {}) {
     // larger than the whole tool table.
     const surface = new Set(visibleNamesFor(agent?.ctx?.tools, agent) ?? [])
     const universe = surface.size > 0 ? surface : catalogue
+    // What each of the two base rows would put in the prompt. Without this the
+    // menu can only price a switch by context length, which is the same number
+    // on every row and therefore says nothing about the row; the tool-table size
+    // is what actually differs between 全部 / 仅内置 / each kit.
+    const baseTokens = index.size === 0
+      ? undefined
+      : {
+        all: ledger?.totalTokens ?? tokensForNames([...catalogue].filter((name) => universe.has(name)), index),
+        dsh: tokensForNames(catalog.builtins.filter((name) => universe.has(name)), index),
+      }
     const priced = (row) => {
       if (index.size === 0) return row
       const names = asNames(row.allow ?? row.builtins).filter((name) => universe.has(name))
@@ -1547,6 +1557,7 @@ export function apply(ctx, config = {}) {
       // the kit rewrites the tool definitions, and every token after them is
       // billed again at the miss price.
       context: contextOf(agent),
+      baseTokens,
       ledger,
       catalog,
       tools: toolCatalog(),

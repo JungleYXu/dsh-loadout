@@ -115,11 +115,11 @@ Switching is not free. The request prefix is ordered system prompt → tool defi
 - Switch mid-conversation at 150k tokens: roughly one full-context miss (¥0.2 on this machine), paid back slowly by the ~1.9k saved per turn.
 - After a long idle gap, a restart, or a compaction: the cache is cold anyway, so a switch there is nearly free.
 
-The menu quotes `≈¥0.2x` on every kit that is not in use — and on the `全部` / `仅内置` rows, since those switch tools too — and the status line carries `· context ~150k`. The row labels go quiet below 20k, where the money is noise, but the line under the reminder in the footer always states the bill:
+Each row states **how many tokens of tool definitions it would put in the prompt** (`≈3.1k tokens`; `全部` is `≈5.6k tokens`, `仅内置` `≈4.1k tokens`), and a kit that new conversations start from is marked after its name (`全部（默认）`, `idea（默认）`); the status line carries `· context ~150k`. The rows do not quote money: any switch invalidates the same stretch of history, so the number is identical on every row and only hides what actually differs — how much tool table each choice installs. Money appears once, bold, under the reminder in the footer:
 
 > 本对话上下文（约 150k tokens），下一条未命中价≈¥0.23，之后恢复至缓存价。
 
-It lives there rather than in a per-row tooltip because the reminder block is the paragraph people read; a tooltip has to be found first. The number comes from the host token meter's `contextPressure` projection (the provider-reported size of the last request plus whatever the surface has grown by since), not from guessing at the session file. The ¥2 / ¥0.5 per million tokens (miss / hit) are fixed estimates: they only feed the hint, and no setting changes what a switch does.
+It lives there rather than in a per-row tooltip because the reminder block is the paragraph people read; a tooltip has to be found first. The number comes from the host token meter's `contextPressure` projection (the provider-reported size of the last request plus whatever the surface has grown by since), not from guessing at the session file. The ¥2 / ¥0.5 per million tokens (miss / hit) are fixed estimates: they only feed the hint, and no setting changes what a switch does. The settings page's `全部` and `仅内置` cards state their token counts too, like every kit card.
 
 The `加挂` group counts `in this conversation / plugins there are at all` (e.g. `加挂（1/5）`), so under the `全部` base it reads `6/6`: all six plugins are already in, and there is nothing left to attach. Its tooltip only explains the verb ("在当前选择上临时加开插件，不新建套装。已经包含的插件不能再加。"); the bill is stated once, at the bottom.
 
