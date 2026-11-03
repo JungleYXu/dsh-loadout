@@ -47,9 +47,9 @@ Without the dsh CLI you can use `scripts/install.ps1`: it creates the junction l
 
 Restart the app afterwards: host plugins have no hot reload, and the UI needs at least a refresh.
 
-### Why not copy the files
+### Link installs, not copies
 
-That is exactly how 0.4.0 broke startup: `install.ps1` copied files into the profile, so after the source was fixed the profile still ran the old bundle. A link cannot drift.
+A **link** install, not a copy. A copy lands in the profile and keeps running the old bundle after the source changes — that is how 0.4.0 broke startup. A link cannot drift, and `preflight` reports whether the install has.
 
 ### Self-checks
 
@@ -119,7 +119,7 @@ Each row states **how many tokens of tool definitions it would put in the prompt
 
 > 本对话上下文（约 150k tokens），下一条未命中价≈¥0.23，之后恢复至缓存价。
 
-It lives there rather than in a per-row tooltip because the reminder block is the paragraph people read; a tooltip has to be found first. The number comes from the host token meter's `contextPressure` projection (the provider-reported size of the last request plus whatever the surface has grown by since), not from guessing at the session file. The ¥2 / ¥0.5 per million tokens (miss / hit) are fixed estimates: they only feed the hint, and no setting changes what a switch does. The settings page's `全部` and `仅内置` cards state their token counts too, like every kit card.
+The number comes from the host token meter's `contextPressure` projection (the provider-reported size of the last request plus whatever the surface has grown by since), not from guessing at the session file. The ¥2 / ¥0.5 per million tokens (miss / hit) are fixed estimates: they only feed the hint, and no setting changes what a switch does. The settings page's `全部` and `仅内置` cards state their token counts too, like every kit card.
 
 The `加挂` group counts `in this conversation / plugins there are at all` (e.g. `加挂（1/5）`), so under the `全部` base it reads `6/6`: all six plugins are already in, and there is nothing left to attach. Its tooltip only explains the verb ("在当前选择上临时加开插件，不新建套装。已经包含的插件不能再加。"); the bill is stated once, at the bottom.
 
@@ -127,7 +127,7 @@ The last line of the conversation menu's footer is the one that matters most: **
 
 Configuring is not the same as using: in the conversation menu, "＋ 新建套装" offers **保存** (store it, keep the current tools) and **保存并启用** (store it and switch to it — the hover text says the next message is billed once at the miss price). "保存" in Settings only ever saves.
 
-If you do not want to pay it now, do not switch here: choosing the default kit is not a conversation-level action. It lives in Settings → 装备栏 (the "设为默认" button on each card), and it only changes what *new* conversations start from — this conversation keeps its kit and its cache.
+Choosing the default kit is not a conversation-level action. It lives in Settings → 装备栏 (the "设为默认" button on each card), and it only changes what *new* conversations start from — this conversation keeps its kit and its cache.
 
 Three surfaces, three scopes: **Settings** owns the global half (the default kit, creating / editing / deleting kits); **the new-conversation pill** owns only the conversation that has not started yet (which kit, no default, no create/edit); **the conversation menu** owns only the current conversation (switch, create a kit).
 
@@ -141,7 +141,7 @@ The pick binds this conversation only; it does not change the default for new co
 
 A pick made before the first message is a **draft**: leave the screen without sending anything (switch to another conversation, reload the page) and it is discarded, so the next new conversation starts at the default again — the same reset the host applies to its own mode. The marker is stored in `loadout.json` under `drafts`, so restarting DSH cannot turn "the kit I clicked once on the welcome screen" into a decision for that conversation. Once a message has actually run, the kit becomes this conversation's fixed binding.
 
-The pill also follows Settings: change the default kit and the welcome screen shows the new one without reopening the conversation (it listens to `dsh-loadout:changed` and window `focus`). What it shows is the default, not "what was chosen here": a binding written from a default at creation time is marked `auto` in `loadout.json` and never counts as this conversation's pick, so moving the default from `idea` to `全部` immediately answers `全部` on a new screen. When the borrowed kit no longer matches the current default, the welcome screen asks the host to catch up (`bind { follow: true }`) — still a loan, still free, and still no draft. The first finished turn clears the marker and the kit belongs to the conversation from then on. Changing the default itself never rewrites an existing conversation; only the welcome screen moves, and only because nothing has been sent yet.
+The pill follows Settings: change the default kit and the welcome screen shows the new one without reopening the conversation. What it shows is the default, not "what was chosen here": a binding written from a default at creation time is marked `auto` in `loadout.json` and never counts as this conversation's pick, so moving the default from `idea` to `全部` answers `全部` on a new screen. While the borrowed kit still differs from the default, the welcome screen asks the host to catch up (`bind { follow: true }`) — still a loan, still free, and still no draft. The first finished turn clears the marker and the kit belongs to the conversation from then on. Changing the default never rewrites an existing conversation.
 
 ## Files
 
