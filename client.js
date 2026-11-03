@@ -601,16 +601,24 @@ window.__ModuleLoader__.load({
           if (firstLook.current === true && next.draft === true) {
             next = await request({ action: 'release', sessionId })
           }
-          // This conversation may still hold the default it was created with,
-          // while the default has moved since (the settings page does not touch
-          // conversations, on purpose). Showing the new default in the chip
-          // while the agent still carries the old kit would be a quiet lie, so
-          // the welcome screen — the one place where a switch is free — asks the
-          // host to catch up. `follow` keeps it borrowed: no draft, and the next
-          // default change moves it again.
-          const wanted = typeof next.defaultKit === 'string' ? next.defaultKit : ''
-          if (next.bound !== true && String(next.binding ?? '') !== wanted) {
-            next = await request({ action: 'bind', sessionId, name: wanted, follow: true })
+          // A blank screen has no history, so nothing is lost by agreeing with
+          // it: whatever the chip shows is what the next message must use. That
+          // covers a conversation created while a different default was set —
+          // the store still carries that kit, and it used to be shown as if it
+          // had been chosen here. `follow` keeps the correction borrowed (no
+          // draft), so a later default change moves it again.
+          if (blank === true) {
+            const wanted = next.draft === true
+              ? String(next.binding ?? '')
+              : (typeof next.defaultKit === 'string' ? next.defaultKit : '')
+            if (String(next.binding ?? '') !== wanted) {
+              try {
+                next = await request({ action: 'bind', sessionId, name: wanted, follow: true })
+              } catch {
+                // Following is a courtesy, not the answer: if the host refuses,
+                // `load` already told the truth about what this screen uses.
+              }
+            }
           }
           firstLook.current = false
           setData(next)

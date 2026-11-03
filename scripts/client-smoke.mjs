@@ -553,6 +553,12 @@ try {
   check('the picker can ask the host to catch up with the default',
     source.includes('follow: true') && source.includes("String(next.binding ?? '') !== wanted"),
     'no catch-up request in the picker')
+  // The catch-up must hang on "this screen is blank", not on "this conversation
+  // never picked": a conversation created under an older default carries a real
+  // binding, and the pill used to show it as if it had been chosen here.
+  check('the catch-up is gated on a blank screen, not on the binding',
+    source.includes('if (blank === true)') && !source.includes('next.bound !== true &&'),
+    'the catch-up still waits for a missing binding')
 
   // Once the conversation has a message the hero is gone, and so is the picker.
   check('the picker leaves with the hero', hero.component({ sessionId: 'session-new', preview: { blank: false, data: fixture } }) === null)
