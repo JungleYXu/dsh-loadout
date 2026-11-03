@@ -472,6 +472,18 @@ try {
   check('both kit groups start folded', !openedText.includes('写作') && !openedText.includes('另一套'), openedText)
   check('folded groups still say how many they hold',
     openedText.includes('（5）') && openedText.includes('（2）'), openedText)
+  // A folded group would otherwise answer "nothing chosen" on a fresh screen:
+  // the default kit stays visible and is marked the way the header menu marks it.
+  check('a folded group still shows the default kit',
+    openedText.includes('我的套（用于视频制作）（默认）') && !openedText.includes('另一套'), openedText)
+  const presetFold = expand(hero.component({
+    sessionId: 'session-new',
+    preview: { blank: true, data: { ...fixture, defaultKit: 'chat' }, open: true },
+  }))
+  check('a folded preset group shows the default preset too',
+    textOf(presetFold).includes('仅聊天（默认）') && !textOf(presetFold).includes('写作'), textOf(presetFold))
+  check('the collapsed chip stays plain',
+    !collapsedText.includes('（默认）'), collapsedText)
 
   // The picker answers one question — which kit this conversation starts with.
   // Creating, editing and choosing the default are someone else's job (设置), and
@@ -576,7 +588,7 @@ try {
   // The title and its caveat are one thought; the note sits beside the heading
   // instead of becoming a paragraph of its own above the cards.
   check('the default heading carries its caveat on the same line',
-    panelText.includes('新对话默认套装：只影响新建对话'), panelText.slice(0, 400))
+    panelText.includes('新对话默认套装只影响新建对话'), panelText.slice(0, 400))
   // One text node, not two spans: the second span's own 0.6 opacity multiplied
   // with the heading's 0.6, so the same line came out in two shades.
   const splitCaveat = nodesIn(panel, (node) => textOf(node) === '只影响新建对话')

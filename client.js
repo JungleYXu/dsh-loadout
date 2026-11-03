@@ -672,6 +672,13 @@ window.__ModuleLoader__.load({
       const current = data.bound === true
         ? (typeof data.binding === 'string' ? data.binding : '')
         : (typeof data.defaultKit === 'string' ? data.defaultKit : '')
+      // The list marks the default kit the way the header menu does — after the
+      // name. The collapsed chip stays plain (`选择对话套装：idea`): there it is
+      // the current pick, and "default" is not what the sentence says.
+      const isDefaultName = (name) => typeof data.defaultKit === 'string' && data.defaultKit === name
+      const marked = (label, name) => (isDefaultName(name) ? `${label}（默认）` : label)
+      const defaultKitRow = kits.find((kit) => kit.name === data.defaultKit)
+      const defaultPresetRow = presets.find((preset) => preset.name === data.defaultKit)
       const row = (name, label, tip) => h(MenuRow, {
         key: `pick-${name === '' ? 'all' : name}`,
         label,
@@ -683,7 +690,7 @@ window.__ModuleLoader__.load({
       })
       const kitRow = (kit) => h(MenuRow, {
         key: `pick-${kit.name}`,
-        label: kitLabel(kit),
+        label: marked(kitLabel(kit), kit.name),
         active: current === kit.name,
         indent: true,
         disabled: busy,
@@ -713,8 +720,8 @@ window.__ModuleLoader__.load({
         h('span', { style: styles.caret }, open ? '▾' : '▸')),
         open
           ? h('div', { style: styles.pickPanel },
-            row('', '全部', '不裁剪：Harness 自带工具和所有已启用插件的工具都能用。'),
-            row(DEFAULT_DSH, '仅内置', '只保留 Harness 自带的工具，下载插件的工具全部隐藏。'),
+            row('', marked('全部', ''), '不裁剪：Harness 自带工具和所有已启用插件的工具都能用。'),
+            row(DEFAULT_DSH, marked('仅内置', DEFAULT_DSH), '只保留 Harness 自带的工具，下载插件的工具全部隐藏。'),
             h(GroupHead, {
               title: '预设套装',
               count: presets.length,
@@ -722,7 +729,12 @@ window.__ModuleLoader__.load({
               tip: '出厂自带的只读套装，点一下即可套用。',
               onToggle: () => setGroups({ ...groups, presets: !groups.presets }),
             }),
-            groups.presets === true ? presets.map(kitRow) : null,
+            // A collapsed group still shows the default kit: the picker is how
+            // you see what this conversation will start with, and hiding it
+            // behind a fold would answer "nothing chosen" on a fresh screen.
+            groups.presets === true
+              ? presets.map(kitRow)
+              : (defaultPresetRow ? kitRow(defaultPresetRow) : null),
             h(GroupHead, {
               title: '我的套装',
               count: kits.length,
@@ -730,7 +742,7 @@ window.__ModuleLoader__.load({
               tip: '你自己保存的套装，点一下即可套用。',
               onToggle: () => setGroups({ ...groups, kits: !groups.kits }),
             }),
-            groups.kits === true ? kits.map(kitRow) : null)
+            groups.kits === true ? kits.map(kitRow) : (defaultKitRow ? kitRow(defaultKitRow) : null))
           : null,
       )
     }
@@ -1562,7 +1574,7 @@ window.__ModuleLoader__.load({
         // and carried its own 0.6 opacity inside a heading that is already 0.6 —
         // nested opacity multiplies, so it rendered dimmer than the title next to
         // it and read as a different font rather than the rest of the sentence.
-        h('div', { style: { ...styles.sectionTitle, marginTop: 14 } }, '新对话默认套装：只影响新建对话'),
+        h('div', { style: { ...styles.sectionTitle, marginTop: 14 } }, '新对话默认套装只影响新建对话'),
         h('div', { style: { ...styles.meta, marginBottom: 6 } },
           // The rest of the sentence stays abbreviated for the 370px panel.
           '当前对话在「装备栏」切换；新建时也可选套装。'),
