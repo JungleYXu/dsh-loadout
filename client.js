@@ -1558,12 +1558,11 @@ window.__ModuleLoader__.load({
             ].join('　·　')),
         // This panel has no Session of its own: the host answers a bare GET from
         // the most recently seen agent, so the ledger above is that conversation's.
-        h('div', { style: { ...styles.sectionTitle, marginTop: 14, display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' } },
-          h('span', null, '新对话默认套装'),
-          // Beside the title, not under it: "新对话默认套装" and "只影响新建对话"
-          // are one thought, and splitting them made the note look like it
-          // belonged to the list below.
-          h('span', { style: styles.meta }, '只影响新建对话')),
+        // One string, one style. As two spans the caveat sat behind a flex gap
+        // and carried its own 0.6 opacity inside a heading that is already 0.6 —
+        // nested opacity multiplies, so it rendered dimmer than the title next to
+        // it and read as a different font rather than the rest of the sentence.
+        h('div', { style: { ...styles.sectionTitle, marginTop: 14 } }, '新对话默认套装：只影响新建对话'),
         h('div', { style: { ...styles.meta, marginBottom: 6 } },
           // The rest of the sentence stays abbreviated for the 370px panel.
           '当前对话在「装备栏」切换；新建时也可选套装。'),

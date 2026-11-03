@@ -576,7 +576,12 @@ try {
   // The title and its caveat are one thought; the note sits beside the heading
   // instead of becoming a paragraph of its own above the cards.
   check('the default heading carries its caveat on the same line',
-    panelText.includes('新对话默认套装只影响新建对话'), panelText.slice(0, 400))
+    panelText.includes('新对话默认套装：只影响新建对话'), panelText.slice(0, 400))
+  // One text node, not two spans: the second span's own 0.6 opacity multiplied
+  // with the heading's 0.6, so the same line came out in two shades.
+  const splitCaveat = nodesIn(panel, (node) => textOf(node) === '只影响新建对话')
+  check('the caveat is not a separately styled node', splitCaveat.length === 0,
+    `${splitCaveat.length} · 只影响新建对话`)
   // 全部 / 仅内置 are the only two cards that had no number; they price their own
   // tool tables, which is also what the header menu's rows now show.
   check('the base cards state their tool tokens',
