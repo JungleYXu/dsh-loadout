@@ -117,7 +117,9 @@ Switching is not free. The request prefix is ordered system prompt → tool defi
 
 The menu quotes `≈¥0.2x` on every kit that is not in use, and the status line carries `· context ~150k`; below 20k neither is shown, because at that size the money is noise. The number comes from the host token meter's `contextPressure` projection (the provider-reported size of the last request plus whatever the surface has grown by since), not from guessing at the session file. Prices default to ¥2 / ¥0.5 per million tokens (miss / hit) and are editable under "切换一次大概多贵" in Settings; a wrong price can only make the estimate wrong.
 
-If you do not want to pay it now, click **`下次对话`** at the end of the row: it writes `defaultKit` only, leaves this conversation and its cache untouched, and takes effect the next time you start a conversation.
+If you do not want to pay it now, do not switch here: choosing the default kit is not a conversation-level action. It lives in Settings → 装备栏 (the "设为默认" button on each card), and it only changes what *new* conversations start from — this conversation keeps its kit and its cache.
+
+Three surfaces, three scopes: **Settings** owns the global half (the default kit, creating / editing / deleting kits); **the new-conversation pill** owns only the conversation that has not started yet (which kit, no default, no create/edit); **the conversation menu** owns only the current conversation (switch, create a kit).
 
 ## Picking a kit for a new conversation
 
@@ -127,7 +129,9 @@ This is the one switch that is genuinely free: there is no agent yet, so no requ
 
 The pick binds this conversation only; it does not change the default for new conversations — that still lives in Settings. On a host without this slot (an older DSH), the row simply does not appear and nothing else changes.
 
-A pick made before the first message is a **draft**: leave the screen without sending anything (switch to another conversation, reload the page) and it is discarded, so the next new conversation starts at the default again — the same reset the host applies to its own mode. Once a message has actually run, the kit becomes this conversation's fixed binding.
+A pick made before the first message is a **draft**: leave the screen without sending anything (switch to another conversation, reload the page) and it is discarded, so the next new conversation starts at the default again — the same reset the host applies to its own mode. The marker is stored in `loadout.json` under `drafts`, so restarting DSH cannot turn "the kit I clicked once on the welcome screen" into a decision for that conversation. Once a message has actually run, the kit becomes this conversation's fixed binding.
+
+The pill also follows Settings: change the default kit and the welcome screen shows the new one without reopening the conversation (it listens to `dsh-loadout:changed` and window `focus`).
 
 ## Files
 

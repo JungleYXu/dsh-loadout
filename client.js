@@ -221,16 +221,6 @@ window.__ModuleLoader__.load({
       mark: { width: 12, flex: 'none', color: '#2563eb', fontSize: 12, textAlign: 'center' },
       rowTitle: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 },
       meta: { fontSize: 11, opacity: 0.6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-      // The secondary action on a row (`下次对话`). Deliberately quiet: it must
-      // never compete with the row itself, because it is the cheap alternative
-      // to clicking the row, not a second thing to read.
-      aside: {
-        flex: 'none', marginLeft: 'auto', padding: '1px 6px', borderRadius: 999,
-        border: '1px solid transparent', background: 'transparent', color: 'inherit',
-        font: 'inherit', fontSize: 10, lineHeight: 1.6, cursor: 'pointer',
-        opacity: 0.5, whiteSpace: 'nowrap',
-      },
-      asideOn: { opacity: 0.9, color: '#2563eb', borderColor: 'rgba(37,99,235,.35)' },
       topline: { display: 'flex', alignItems: 'center', gap: 6, padding: '2px 6px 8px' },
       summary: {
         fontSize: 11, opacity: 0.72, whiteSpace: 'nowrap',
@@ -420,22 +410,7 @@ window.__ModuleLoader__.load({
         props.hintTip === undefined
           ? h('span', { style: styles.meta }, props.hint)
           : h(Tip, { text: props.hintTip }, h('span', { style: styles.meta }, props.hint))
-      ),
-      // A secondary action living inside the row: clicking it must not also
-      // click the row, or "use next time" would apply the kit right now.
-      props.aside === undefined ? null : h('button', {
-        type: 'button',
-        style: { ...styles.aside, ...(props.aside.on === true ? styles.asideOn : null) },
-        title: props.aside.tip,
-        'aria-label': `${props.label}：${props.aside.label}`,
-        onClick: (event) => {
-          event.stopPropagation()
-          props.aside.onClick()
-        },
-        onKeyDown: (event) => {
-          if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
-        },
-      }, props.aside.label))
+      ))
     }
 
     /** A collapsible group header: caret, title with its count, optional action. */
@@ -628,6 +603,21 @@ window.__ModuleLoader__.load({
 
       useEffect(() => {
         refresh()
+      }, [refresh])
+
+      // The picker outlives the settings page: the default kit it shows when
+      // nothing is bound can change while this visit stays open, and coming back
+      // to the composer must not show the kit that was current at mount. Same
+      // sources the header menu listens to, plus focus for changes made in
+      // another window.
+      useEffect(() => {
+        const sync = () => { refresh() }
+        window.addEventListener(CHANGED_EVENT, sync)
+        window.addEventListener('focus', sync)
+        return () => {
+          window.removeEventListener(CHANGED_EVENT, sync)
+          window.removeEventListener('focus', sync)
+        }
       }, [refresh])
 
       // The list floats over the composer instead of pushing it down: a select
@@ -865,21 +855,10 @@ window.__ModuleLoader__.load({
       const priceTip = switchPriceTip(contextTokens, prices)
 
       /**
-       * `下次对话` — set what a new conversation starts from, without touching
-       * this one. It only writes `defaultKit`, so nothing is re-assembled and
-       * no cache is invalidated: the zero-cost way to change your mind.
+       * This menu belongs to one conversation: it may switch that conversation
+       * and it may build a new kit, but choosing what *new* conversations start
+       * from is a global decision and lives in 设置 → 装备栏 (`defaultKit`).
        */
-      const defaultAside = (name) => {
-        const isDefault = (data?.defaultKit ?? '') === name
-        return {
-          label: isDefault ? '✓ 新对话' : '下次对话',
-          on: isDefault,
-          tip: isDefault
-            ? '之后新建的对话默认用这套，当前对话不受影响。点一下取消，新对话回到「全部」。'
-            : '只改之后新建的对话：当前对话不变，也不触发任何重新计费。',
-          onClick: () => run({ action: 'default', name: isDefault ? '' : name }),
-        }
-      }
 
       /** `默认 · ≈¥0.23`, and nothing at all when the switch is not worth a warning. */
       const rowHint = (parts, active) => parts
@@ -1062,7 +1041,6 @@ window.__ModuleLoader__.load({
           hint: rowHint([activeUserKit.isDefault ? '默认' : ''], true),
           active: true,
           indent: true,
-          aside: defaultAside(activeUserKit.name),
           onClick: () => run({ action: 'applyBase', base: 'kit', kit: activeUserKit.name }),
         }),
         groups.kits === true
@@ -1074,7 +1052,6 @@ window.__ModuleLoader__.load({
               hint: rowHint([kit.isDefault ? '默认' : ''], false),
               hintTip: price === '' ? undefined : priceTip,
               indent: true,
-              aside: defaultAside(kit.name),
               onClick: () => {
                 run({ action: 'applyBase', base: 'kit', kit: kit.name })
                 // Picking one puts the list away again; the row that stays is the
@@ -1110,7 +1087,6 @@ window.__ModuleLoader__.load({
             hint: '只读',
             active: true,
             indent: true,
-            aside: defaultAside(activePreset.name),
             onClick: () => run({ action: 'applyBase', base: 'kit', kit: activePreset.name }),
           })
           : null,
@@ -1124,7 +1100,6 @@ window.__ModuleLoader__.load({
               hintTip: price === '' ? undefined : priceTip,
               active: activePreset !== undefined && activePreset.name === preset.name,
               indent: true,
-              aside: defaultAside(preset.name),
               onClick: () => {
                 run({ action: 'applyBase', base: 'kit', kit: preset.name })
                 setGroups({ ...groups, presets: false })

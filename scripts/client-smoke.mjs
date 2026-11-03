@@ -331,25 +331,16 @@ if (pricedMenu !== undefined) {
   const activePriced = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' && textOf(node).includes('我的套'))
   check('the kit already in use quotes no price', !textOf(activePriced[0]).includes('≈¥'), textOf(activePriced[0]))
 
-  const nextButtons = nodesIn(pricedMenu, (node) => node.type === 'button' && textOf(node) === '下次对话')
-  check('inactive kits offer 下次对话', nextButtons.length >= 1, String(nextButtons.length))
-  check('下次对话 says it leaves this conversation alone',
-    nextButtons.every((node) => String(node.props?.title ?? '').includes('当前对话不变')), String(nextButtons.length))
-
-  // Clicking it must only write defaultKit: no base/apply, no re-assembly, no cost.
-  const posts = []
-  fetchImpl = (url, init) => {
-    posts.push({ url, body: JSON.parse(String(init?.body ?? '{}')) })
-    return Promise.resolve({ ok: true, status: 200, json: async () => priced })
-  }
-  const target = nextButtons.find((node) => String(node.props?.title ?? '').includes('当前对话不变'))
-  target?.props?.onClick?.({ stopPropagation() {} })
-  check('下次对话 posts a default action for that kit',
-    posts.length === 1 && posts[0]?.body?.action === 'default' && posts[0]?.body?.name === 'other',
-    JSON.stringify(posts))
-  check('下次对话 leaves the current selection untouched',
-    posts[0]?.body?.base === undefined && posts[0]?.body?.apply === undefined && posts[0]?.body?.applySet === undefined,
-    JSON.stringify(posts[0]?.body))
+  // What new conversations start from is a global decision and belongs to
+  // 设置 → 装备栏. This menu is scoped to one conversation, so it must not grow
+  // a control that writes `defaultKit` — that would be the same mistake as
+  // letting the picker edit kits.
+  const defaultButtons = nodesIn(pricedMenu, (node) => node.type === 'button' &&
+    ['下次对话', '✓ 新对话', '设为默认'].includes(textOf(node).trim()))
+  check('the conversation menu cannot set the default', defaultButtons.length === 0,
+    defaultButtons.map((node) => textOf(node)).join('|'))
+  check('the conversation menu does not mention 下次对话', !pricedText.includes('下次对话'),
+    pricedText.slice(0, 300))
 
   // Below 20k the switch is lost in the noise, and a number there would be noise.
   const shortMenu = expand(header.component({
@@ -406,6 +397,18 @@ try {
   check('both kit groups start folded', !openedText.includes('写作') && !openedText.includes('另一套'), openedText)
   check('folded groups still say how many they hold',
     openedText.includes('（5）') && openedText.includes('（2）'), openedText)
+
+  // The picker answers one question — which kit this conversation starts with.
+  // Creating, editing and choosing the default are someone else's job (设置), and
+  // a picker that also offered them would be a menu pretending to be a page.
+  const pickerText = textOf(hero.component({
+    sessionId: 'session-new',
+    preview: { blank: true, data: fixture, open: true, groups: { presets: true, kits: true } },
+  }))
+  check('the picker does not create kits', !pickerText.includes('新建套装'), pickerText.slice(0, 300))
+  check('the picker does not edit kits', !pickerText.includes('编辑') && !pickerText.includes('删除'), pickerText.slice(0, 300))
+  check('the picker does not set the default', !pickerText.includes('设为默认') && !pickerText.includes('下次对话'),
+    pickerText.slice(0, 300))
 
   // Opening the list must not reflow the page, and it opens upward: the composer
   // row sits at the bottom of the window.

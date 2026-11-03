@@ -1040,6 +1040,13 @@ check('the pick applies as soon as the agent appears',
   JSON.stringify({ binding: afterAgent.body?.binding, selection: afterAgent.body?.selection }))
 check('the picked kit is what the first request will see',
   keptOf(pickAgent).includes('read'), keptOf(pickAgent).join(','))
+// The welcome screen can already have an agent behind it, and the picker still
+// has to know the pick was a draft — otherwise the release never fires and the
+// draft is what the next visit shows.
+const liveDraft = await getState('session-blank')
+check('a live conversation still reports its draft',
+  liveDraft.body?.live === true && liveDraft.body?.draft === true,
+  JSON.stringify({ live: liveDraft.body?.live, draft: liveDraft.body?.draft }))
 
 const cleared = await post({ action: 'bind', sessionId: 'session-blank', name: '' })
 check('binding 全部 clears the pick', cleared.status === 200 && cleared.body?.bound === true && cleared.body?.binding === '',
@@ -1053,6 +1060,12 @@ check('the cleared pick reads back as 全部', clearedState.body?.bound === true
 // host resets its own mode; a completed turn promotes the draft for real.
 const draftBind = await post({ action: 'bind', sessionId: 'session-draft', name: 'pick-kit' })
 check('a welcome-screen pick is marked as a draft', draftBind.body?.draft === true, JSON.stringify(draftBind.body?.draft))
+// The marker has to be on disk, not in this process: a restart used to launder
+// a draft into a decision, so the next visit showed a kit the user never chose.
+const draftStore = () => JSON.parse(readFileSync(storePath, 'utf8'))
+check('the draft marker reaches the store',
+  draftStore().drafts?.['session-draft'] === 'pick-kit',
+  JSON.stringify(draftStore().drafts))
 const draftState = await getState('session-draft')
 check('the draft reads back on the same visit',
   draftState.body?.draft === true && draftState.body?.binding === 'pick-kit',
@@ -1062,6 +1075,9 @@ const released = await post({ action: 'release', sessionId: 'session-draft' })
 check('leaving the welcome screen drops the draft',
   released.body?.draft === false && released.body?.bound === false && released.body?.binding === '',
   JSON.stringify({ draft: released.body?.draft, bound: released.body?.bound, binding: released.body?.binding }))
+check('the released draft leaves nothing behind in the store',
+  draftStore().drafts?.['session-draft'] === undefined && draftStore().assignments['session-draft'] === undefined,
+  JSON.stringify({ drafts: draftStore().drafts, assignment: draftStore().assignments['session-draft'] }))
 const afterRelease = await getState('session-draft')
 check('the next visit starts at the default',
   afterRelease.body?.draft !== true && afterRelease.body?.bound === false,

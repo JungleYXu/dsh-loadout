@@ -189,6 +189,10 @@ function normalizeStore(value) {
     kits: normalizeKits(value.kits),
     defaultKit: typeof value.defaultKit === 'string' ? value.defaultKit.trim() : '',
     assignments: normalizeAssignments(value.assignments),
+    // A pick made in a conversation that has not started yet. Persisted on
+    // purpose: the marker has to survive a restart, or the next visit reads the
+    // binding as "this conversation was switched" and the default never wins.
+    drafts: normalizeAssignments(value.drafts),
     migratedAt: typeof value.migratedAt === 'string' && !Number.isNaN(Date.parse(value.migratedAt))
       ? value.migratedAt
       : undefined,
@@ -330,6 +334,7 @@ export function apply(ctx, config = {}) {
     kits: migrateUserKits(loaded?.store.kits ?? [], presets),
     defaultKit: loaded?.store.defaultKit ?? (typeof config?.defaultKit === 'string' ? config.defaultKit.trim() : ''),
     assignments: loaded?.store.assignments ?? {},
+    drafts: loaded?.store.drafts ?? {},
     migratedAt: loaded?.store.migratedAt,
     // The file the kits actually came from: the legacy path on the first boot
     // after the rename, the new one afterwards.
@@ -354,6 +359,9 @@ export function apply(ctx, config = {}) {
       })),
       defaultKit: book.defaultKit,
       assignments: book.assignments,
+      // Only non-empty while some conversation is still waiting for its first
+      // message; a started conversation drops its entry.
+      ...(Object.keys(book.drafts).length === 0 ? {} : { drafts: book.drafts }),
       ...(book.migratedAt === undefined ? {} : { migratedAt: book.migratedAt }),
     })
     // `source` answers "where do the user's kits live". Writing assignments or a
@@ -465,18 +473,6 @@ export function apply(ctx, config = {}) {
 
   /** Transient kits created by the backward-compatible `applySet` action. */
   const customKits = new Map()
-
-  /**
-   * Kits picked on a conversation that has not started yet.
-   *
-   * Such a pick is a draft, not a decision: the user is still on the welcome
-   * screen, and leaving it without sending anything should look exactly like
-   * never having been there — the same way the host resets its own mode. The
-   * binding still goes into the store (that is what the agent reads when it
-   * appears), and this map records "this one is only a draft", so the next
-   * visit can release it or a completed turn can promote it for real.
-   */
-  const draftPicks = new Map()
 
   /**
    * The host service that turns a Session id into its live agent.
@@ -1259,16 +1255,18 @@ export function apply(ctx, config = {}) {
     // A draft pick stops being a draft as soon as the conversation runs a turn:
     // from then on it is this conversation's kit, like any explicit switch. A
     // conversation that is disposed without ever running one takes its draft
-    // with it.
-    ctx.on('session/event', (session, event) => {
-      const id = session?.id
+    // with it. The marker is persisted (`book.drafts`), so a restart between the
+    // pick and the first message does not turn it into a permanent binding.
+    const dropDraft = (id) => {
       if (typeof id !== 'string') return
-      if (event?.type === 'turn/end') draftPicks.delete(id)
+      if (!Object.prototype.hasOwnProperty.call(book.drafts, id)) return
+      delete book.drafts[id]
+      save()
+    }
+    ctx.on('session/event', (session, event) => {
+      if (event?.type === 'turn/end') dropDraft(session?.id)
     })
-    ctx.on('session/disposed', (session) => {
-      const id = session?.id
-      if (typeof id === 'string') draftPicks.delete(id)
-    })
+    ctx.on('session/disposed', (session) => dropDraft(session?.id))
   } catch {
     // An older host without these events still works; drafts just live longer.
   }
@@ -2094,20 +2092,21 @@ export function apply(ctx, config = {}) {
             // and an unknown id still answer from the last agent seen.
             const sessionId = new URL(req.url ?? '', 'http://localhost').searchParams.get('sessionId') ?? ''
             const found = await agentForSession(sessionId)
-            if (found.ok) return sendJson(res, 200, { ok: true, live: true, ...snapshot(found.agent) })
-            const view = snapshot()
-            view.live = false
+            const view = found.ok ? { live: true, ...snapshot(found.agent) } : { live: false, ...snapshot() }
             // A conversation that has not sent a message yet may have no agent; its
             // binding is still readable by Session id, which is what lets the
             // new-conversation picker show the kit this conversation will start with.
+            // These three are per-Session facts, so they are answered for the id the
+            // caller named — not for whichever agent happened to be resolved.
             if (sessionId !== '') {
               view.binding = bindingOf(sessionId) ?? ''
               // "Chose 全部" and "never chose" both read as an empty binding, and
               // they mean different kits to show in the picker.
               view.bound = bindingOf(sessionId) !== undefined
-              // `draft` says the pick was made on this still-unstarted screen, so
-              // the next visit should start clean instead of inheriting it.
-              view.draft = draftPicks.has(sessionId)
+              // `draft` says the pick was made on a screen that never started, so
+              // the next visit drops it instead of inheriting it. It is read from
+              // the store, so a restart cannot turn a draft into a decision.
+              view.draft = Object.prototype.hasOwnProperty.call(book.drafts, sessionId)
             }
             return sendJson(res, 200, { ok: true, ...view })
           }
@@ -2192,7 +2191,8 @@ export function apply(ctx, config = {}) {
               book.assignments[sessionId] = value
               // Remember that this was a welcome-screen pick, so the next visit
               // can drop it again unless the conversation has actually started.
-              draftPicks.set(sessionId, value)
+              // Persisted: a restart must not launder a draft into a decision.
+              book.drafts[sessionId] = value
               save()
               // With an agent this applies right away; without one the reply still
               // carries the stored binding, which is all the picker needs to show.
@@ -2210,10 +2210,11 @@ export function apply(ctx, config = {}) {
               // resetting its own mode.
               const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
               if (sessionId === '') return sendJson(res, 400, { ok: false, error: '缺少会话 id' })
-              if (!draftPicks.has(sessionId)) {
+              const hadDraft = Object.prototype.hasOwnProperty.call(book.drafts, sessionId)
+              if (!hadDraft) {
                 return sendJson(res, 200, { ok: true, ...snapshot(), binding: bindingOf(sessionId) ?? '', bound: bindingOf(sessionId) !== undefined, live: false })
               }
-              draftPicks.delete(sessionId)
+              delete book.drafts[sessionId]
               delete book.assignments[sessionId]
               save()
               return sendJson(res, 200, { ok: true, ...snapshot(), binding: '', bound: false, live: false, draft: false })
