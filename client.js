@@ -601,6 +601,17 @@ window.__ModuleLoader__.load({
           if (firstLook.current === true && next.draft === true) {
             next = await request({ action: 'release', sessionId })
           }
+          // This conversation may still hold the default it was created with,
+          // while the default has moved since (the settings page does not touch
+          // conversations, on purpose). Showing the new default in the chip
+          // while the agent still carries the old kit would be a quiet lie, so
+          // the welcome screen — the one place where a switch is free — asks the
+          // host to catch up. `follow` keeps it borrowed: no draft, and the next
+          // default change moves it again.
+          const wanted = typeof next.defaultKit === 'string' ? next.defaultKit : ''
+          if (next.bound !== true && String(next.binding ?? '') !== wanted) {
+            next = await request({ action: 'bind', sessionId, name: wanted, follow: true })
+          }
           firstLook.current = false
           setData(next)
         } catch {

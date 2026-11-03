@@ -541,6 +541,19 @@ try {
   }))
   check('a bound conversation names its own kit', textOf(bound).includes('另一套'), textOf(bound))
 
+  // A conversation that borrowed the default is not bound: the chip has to show
+  // the current default even though the store still holds the kit it was given
+  // when it was created.
+  const borrowed = expand(hero.component({
+    sessionId: 'session-new',
+    preview: { blank: true, data: { ...fixture, bound: false, binding: 'other' } },
+  }))
+  check('a borrowed kit does not count as this conversation\'s pick',
+    textOf(borrowed).includes('我的套') && !textOf(borrowed).includes('另一套'), textOf(borrowed))
+  check('the picker can ask the host to catch up with the default',
+    source.includes('follow: true') && source.includes("String(next.binding ?? '') !== wanted"),
+    'no catch-up request in the picker')
+
   // Once the conversation has a message the hero is gone, and so is the picker.
   check('the picker leaves with the hero', hero.component({ sessionId: 'session-new', preview: { blank: false, data: fixture } }) === null)
 } catch (error) {

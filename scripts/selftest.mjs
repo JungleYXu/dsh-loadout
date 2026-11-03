@@ -1096,6 +1096,42 @@ const disposed = await getState('session-draft-2')
 check('a disposed welcome screen takes its draft with it',
   disposed.body?.draft !== true, JSON.stringify(disposed.body?.draft))
 
+// ---- a default is a loan, not a pick ---------------------------------------
+// Creating a conversation while a default is set used to write that default into
+// the conversation's binding as if the user had chosen it. After the default
+// moved, the welcome screen kept showing the old kit under a 「默认」 label.
+const loanAgent = makeAgent(undefined, { id: 'session-loan' })
+fireCreated(loanAgent)
+const loaned = await getState('session-loan')
+check('a conversation that borrowed the default does not count as bound',
+  loaned.body?.bound === false && loaned.body?.binding === 'coding',
+  JSON.stringify({ bound: loaned.body?.bound, binding: loaned.body?.binding }))
+check('the loan is marked as such in the store',
+  draftStore().auto?.['session-loan'] === true && draftStore().drafts?.['session-loan'] === undefined,
+  JSON.stringify({ auto: draftStore().auto, drafts: draftStore().drafts }))
+
+// Changing the default still touches no conversation...
+await ctx.registered.get('kit_set_default').execute({ name: 'pick-kit' }, exec(loanAgent))
+const stillLoaned = await getState('session-loan')
+check('a new default leaves a borrowed conversation on its old kit',
+  stillLoaned.body?.binding === 'coding', JSON.stringify(stillLoaned.body?.binding))
+
+// ...the welcome screen catches it up instead, and the catch-up is still a loan.
+const caughtUp = await post({ action: 'bind', sessionId: 'session-loan', name: 'pick-kit', follow: true })
+check('the follow-up moves a borrowed conversation to the new default',
+  caughtUp.body?.binding === 'pick-kit' && caughtUp.body?.bound === false && caughtUp.body?.draft === false,
+  JSON.stringify({ binding: caughtUp.body?.binding, bound: caughtUp.body?.bound, draft: caughtUp.body?.draft }))
+check('a follow-up writes no draft',
+  draftStore().drafts?.['session-loan'] === undefined && draftStore().auto?.['session-loan'] === true,
+  JSON.stringify({ drafts: draftStore().drafts, auto: draftStore().auto }))
+
+// The first turn turns the loan into this conversation's own kit.
+for (const handler of ctx.handlers.get('session/event') ?? []) handler({ id: 'session-loan' }, { type: 'turn/end' })
+const settled = await getState('session-loan')
+check('the first turn pins the borrowed kit',
+  settled.body?.bound === true && settled.body?.binding === 'pick-kit' && draftStore().auto?.['session-loan'] === undefined,
+  JSON.stringify({ bound: settled.body?.bound, binding: settled.body?.binding, auto: draftStore().auto }))
+
 // ---- report ----------------------------------------------------------------
 rmSync(scratch, { recursive: true, force: true })
 if (failures.length === 0) {

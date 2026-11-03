@@ -193,6 +193,11 @@ function normalizeStore(value) {
     // purpose: the marker has to survive a restart, or the next visit reads the
     // binding as "this conversation was switched" and the default never wins.
     drafts: normalizeAssignments(value.drafts),
+    // Sessions whose binding was not chosen but handed to them by the default
+    // kit at creation. They follow the default until their first turn; an
+    // explicit pick deletes the flag. Persisted for the same reason drafts are:
+    // a restart must not turn "the default I happened to have" into a decision.
+    auto: normalizeAuto(value.auto),
     migratedAt: typeof value.migratedAt === 'string' && !Number.isNaN(Date.parse(value.migratedAt))
       ? value.migratedAt
       : undefined,
@@ -215,8 +220,21 @@ function normalizeAssignments(value) {
   return out
 }
 
-function readStore() {
-  // New file first, then the pre-0.5 copy: a rename must not silently drop the
+/**
+ * Sessions whose binding came from the default kit rather than from a pick.
+ * Stored as `{ [sessionId]: true }`; anything but `true` is ignored, so a
+ * half-written file can only lose the flag, never invent one.
+ */
+function normalizeAuto(value) {
+  const out = {}
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return out
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof key === 'string' && key !== '' && entry === true) out[key] = true
+  }
+  return out
+}
+
+function readStore() {  // New file first, then the pre-0.5 copy: a rename must not silently drop the
   // kits someone already saved. The legacy file is never written again, so the
   // next save moves the store forward for good.
   for (const path of [STORE_PATH, LEGACY_STORE_PATH]) {
@@ -335,6 +353,7 @@ export function apply(ctx, config = {}) {
     defaultKit: loaded?.store.defaultKit ?? (typeof config?.defaultKit === 'string' ? config.defaultKit.trim() : ''),
     assignments: loaded?.store.assignments ?? {},
     drafts: loaded?.store.drafts ?? {},
+    auto: loaded?.store.auto ?? {},
     migratedAt: loaded?.store.migratedAt,
     // The file the kits actually came from: the legacy path on the first boot
     // after the rename, the new one afterwards.
@@ -362,6 +381,8 @@ export function apply(ctx, config = {}) {
       // Only non-empty while some conversation is still waiting for its first
       // message; a started conversation drops its entry.
       ...(Object.keys(book.drafts).length === 0 ? {} : { drafts: book.drafts }),
+      // Same rule: only conversations that have not run a turn yet carry this.
+      ...(Object.keys(book.auto).length === 0 ? {} : { auto: book.auto }),
       ...(book.migratedAt === undefined ? {} : { migratedAt: book.migratedAt }),
     })
     // `source` answers "where do the user's kits live". Writing assignments or a
@@ -612,12 +633,20 @@ export function apply(ctx, config = {}) {
     const header = sessionHeaderOf(sessionId)
     if (header?.origin === 'subagent') return undefined
     let value
+    let fromDefault = false
     const parentBinding = header?.parentSession === undefined ? undefined : bindingOf(header.parentSession)
     if (parentBinding !== undefined) value = parentBinding
     else if (book.migratedAt !== undefined && typeof header?.createdAt === 'number'
       && header.createdAt < Date.parse(book.migratedAt)) value = null
-    else value = defaultBinding()
+    else {
+      value = defaultBinding()
+      fromDefault = true
+    }
     book.assignments[sessionId] = value
+    // Not the user's pick: remember who handed this conversation its kit, so a
+    // later default change can move it. The first turn (or an explicit pick)
+    // drops the flag and the binding becomes this conversation's own.
+    if (fromDefault) book.auto[sessionId] = true
     save()
     return value
   }
@@ -1093,6 +1122,8 @@ export function apply(ctx, config = {}) {
       const next = bindingForSelection(normalized)
       if (bindingOf(sessionId) !== next) {
         book.assignments[sessionId] = next
+        // Switched here, so this conversation stops following the default.
+        delete book.auto[sessionId]
         save()
       }
     }
@@ -1259,8 +1290,13 @@ export function apply(ctx, config = {}) {
     // pick and the first message does not turn it into a permanent binding.
     const dropDraft = (id) => {
       if (typeof id !== 'string') return
-      if (!Object.prototype.hasOwnProperty.call(book.drafts, id)) return
-      delete book.drafts[id]
+      // The first turn ends the grace period for both markers: the pick is now
+      // this conversation's kit, and so is a default it was handed at creation.
+      const hadDraft = Object.prototype.hasOwnProperty.call(book.drafts, id)
+      const borrowed = book.auto[id] === true
+      if (!hadDraft && !borrowed) return
+      if (hadDraft) delete book.drafts[id]
+      if (borrowed) delete book.auto[id]
       save()
     }
     ctx.on('session/event', (session, event) => {
@@ -1551,8 +1587,10 @@ export function apply(ctx, config = {}) {
       binding: bindingOf(sessionIdOf(agent)) ?? '',
       // `binding` cannot tell "chose 全部" from "has not chosen yet" (both read
       // as ''); the new-conversation picker shows the default kit until one is
-      // chosen, so the distinction has to travel with the snapshot.
-      bound: bindingOf(sessionIdOf(agent)) !== undefined,
+      // chosen, so the distinction has to travel with the snapshot. A binding
+      // that came from the default is not a choice either — the picker has to
+      // keep following the default for it.
+      bound: bindingOf(sessionIdOf(agent)) !== undefined && book.auto[sessionIdOf(agent)] !== true,
       // Prompt size, so the chip can price a switch without guessing: swapping
       // the kit rewrites the tool definitions, and every token after them is
       // billed again at the miss price.
@@ -1715,6 +1753,12 @@ export function apply(ctx, config = {}) {
       const kit = resolveKit(lastAgent, wanted)
       if (kit === undefined) throw new Error(`未知套装 "${wanted}"`)
       book.defaultKit = kit.name
+      // No conversation is touched here, not even one that is still blank: the
+      // default is a rule for conversations that have not been created yet. A
+      // conversation that borrowed the old default is repointed by the welcome
+      // screen itself (it can see the mismatch and ask for the new one), which
+      // keeps "changing the default never rewrites a conversation" true for
+      // every caller, including the tool.
       save()
       return { defaultKit: book.defaultKit }
     },
@@ -1990,6 +2034,7 @@ export function apply(ctx, config = {}) {
         value = kit.name
       }
       book.assignments[sessionId] = value
+      delete book.auto[sessionId]
       save()
       // Apply it live when that conversation is still open; otherwise the pin is
       // picked up the next time the conversation is read.
@@ -2113,7 +2158,7 @@ export function apply(ctx, config = {}) {
               view.binding = bindingOf(sessionId) ?? ''
               // "Chose 全部" and "never chose" both read as an empty binding, and
               // they mean different kits to show in the picker.
-              view.bound = bindingOf(sessionId) !== undefined
+              view.bound = bindingOf(sessionId) !== undefined && book.auto[sessionId] !== true
               // `draft` says the pick was made on a screen that never started, so
               // the next visit drops it instead of inheriting it. It is read from
               // the store, so a restart cannot turn a draft into a decision.
@@ -2200,6 +2245,21 @@ export function apply(ctx, config = {}) {
                 return sendJson(res, 404, { ok: false, error: `没有套装「${value}」` })
               }
               book.assignments[sessionId] = value
+              if (body.follow === true) {
+                // "Catch up with the default", not a pick: the welcome screen uses
+                // this when the conversation still holds the kit a previous
+                // default gave it. No draft, and the auto flag stays, so a later
+                // default change moves it again.
+                book.auto[sessionId] = true
+                delete book.drafts[sessionId]
+                save()
+                const follow = await agentForSession(sessionId)
+                if (!follow.ok) return sendJson(res, 200, { ok: true, ...snapshot(), binding: value ?? '', bound: false, draft: false })
+                rememberAgent(follow.agent)
+                return sendJson(res, 200, { ok: true, ...snapshot(follow.agent), bound: false, draft: false })
+              }
+              // An explicit pick stops following the default.
+              delete book.auto[sessionId]
               // Remember that this was a welcome-screen pick, so the next visit
               // can drop it again unless the conversation has actually started.
               // Persisted: a restart must not launder a draft into a decision.
@@ -2223,10 +2283,12 @@ export function apply(ctx, config = {}) {
               if (sessionId === '') return sendJson(res, 400, { ok: false, error: '缺少会话 id' })
               const hadDraft = Object.prototype.hasOwnProperty.call(book.drafts, sessionId)
               if (!hadDraft) {
-                return sendJson(res, 200, { ok: true, ...snapshot(), binding: bindingOf(sessionId) ?? '', bound: bindingOf(sessionId) !== undefined, live: false })
+                const boundHere = bindingOf(sessionId) !== undefined && book.auto[sessionId] !== true
+                return sendJson(res, 200, { ok: true, ...snapshot(), binding: bindingOf(sessionId) ?? '', bound: boundHere, live: false })
               }
               delete book.drafts[sessionId]
               delete book.assignments[sessionId]
+              delete book.auto[sessionId]
               save()
               return sendJson(res, 200, { ok: true, ...snapshot(), binding: '', bound: false, live: false, draft: false })
             }

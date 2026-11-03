@@ -141,7 +141,7 @@ The pick binds this conversation only; it does not change the default for new co
 
 A pick made before the first message is a **draft**: leave the screen without sending anything (switch to another conversation, reload the page) and it is discarded, so the next new conversation starts at the default again — the same reset the host applies to its own mode. The marker is stored in `loadout.json` under `drafts`, so restarting DSH cannot turn "the kit I clicked once on the welcome screen" into a decision for that conversation. Once a message has actually run, the kit becomes this conversation's fixed binding.
 
-The pill also follows Settings: change the default kit and the welcome screen shows the new one without reopening the conversation (it listens to `dsh-loadout:changed` and window `focus`).
+The pill also follows Settings: change the default kit and the welcome screen shows the new one without reopening the conversation (it listens to `dsh-loadout:changed` and window `focus`). What it shows is the default, not "what was chosen here": a binding written from a default at creation time is marked `auto` in `loadout.json` and never counts as this conversation's pick, so moving the default from `idea` to `全部` immediately answers `全部` on a new screen. When the borrowed kit no longer matches the current default, the welcome screen asks the host to catch up (`bind { follow: true }`) — still a loan, still free, and still no draft. The first finished turn clears the marker and the kit belongs to the conversation from then on. Changing the default itself never rewrites an existing conversation; only the welcome screen moves, and only because nothing has been sent yet.
 
 ## Files
 
