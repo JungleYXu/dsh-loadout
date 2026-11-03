@@ -589,8 +589,11 @@ window.__ModuleLoader__.load({
           let next = await load(sessionId)
           // A draft pick left on this welcome screen by a previous visit is not a
           // decision: ask the host to drop it before showing anything, so the
-          // user sees the same clean slate the host gives its own mode.
-          if (firstLook.current === true && next.draft === true && next.live !== true) {
+          // user sees the same clean slate the host gives its own mode. This has
+          // to cover a welcome screen that already has an agent behind it — that
+          // is the common case, and skipping it there is what let a draft from
+          // the last visit outlive the restart that should have cleared it.
+          if (firstLook.current === true && next.draft === true) {
             next = await request({ action: 'release', sessionId })
           }
           firstLook.current = false
