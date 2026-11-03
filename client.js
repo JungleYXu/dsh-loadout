@@ -86,6 +86,60 @@ window.__ModuleLoader__.load({
       return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`
     }
 
+    // The cost of a switch is quoted at provider list prices, in ¥ per million
+    // tokens. It is a setting, not a constant: prices move, and a wrong number
+    // here can only make an estimate wrong — it never changes what a switch does.
+    const PRICE_KEY = 'dsh-loadout:pricing'
+    const PRICE_DEFAULT = { miss: 2, hit: 0.5 }
+    /** Below this the switch is lost in the noise, and a warning would be noise. */
+    const PRICE_MIN_TOKENS = 20000
+
+    function readPrices() {
+      try {
+        const raw = window.localStorage?.getItem(PRICE_KEY)
+        if (raw === null || raw === undefined) return { ...PRICE_DEFAULT }
+        const parsed = JSON.parse(raw)
+        const miss = Number(parsed?.miss)
+        const hit = Number(parsed?.hit)
+        return {
+          miss: Number.isFinite(miss) && miss >= 0 ? miss : PRICE_DEFAULT.miss,
+          hit: Number.isFinite(hit) && hit >= 0 ? hit : PRICE_DEFAULT.hit,
+        }
+      } catch {
+        return { ...PRICE_DEFAULT }
+      }
+    }
+
+    function writePrices(next) {
+      try {
+        window.localStorage?.setItem(PRICE_KEY, JSON.stringify(next))
+      } catch {
+        // A browser without storage just keeps the defaults for this page.
+      }
+    }
+
+    /**
+     * `≈¥0.23` for one switch at this prompt size, or `''` when it is too
+     * small to be worth a number. Always approximate: the prompt size is a
+     * provider-reported anchor plus a heuristic delta, and the price is a
+     * setting, not a quote.
+     */
+    function switchPrice(tokens, prices) {
+      const n = Number(tokens)
+      if (!Number.isFinite(n) || n < PRICE_MIN_TOKENS) return ''
+      const extra = Math.max(0, prices.miss - prices.hit)
+      const yuan = (n / 1e6) * extra
+      if (yuan < 0.005) return ''
+      return `≈¥${yuan < 0.1 ? yuan.toFixed(3) : yuan.toFixed(2)}`
+    }
+
+    /** The sentence behind a price, spelled out for the row's tooltip. */
+    function switchPriceTip(tokens, prices) {
+      const n = Math.round(Number(tokens) || 0)
+      const price = switchPrice(n, prices)
+      return `切换会重写工具定义，这段上下文（约 ${formatTokens(n)} tokens）要按未命中价重新算一次${price === '' ? '' : `，${price}`}；之后每轮又回到缓存价。`
+    }
+
     // Every mutation fans out to the other panel. The chip and the settings page
     // are separate React trees with separate snapshots, so a switch made in one
     // used to leave the other showing the old numbers until it remounted.
@@ -164,6 +218,16 @@ window.__ModuleLoader__.load({
       mark: { width: 12, flex: 'none', color: '#2563eb', fontSize: 12, textAlign: 'center' },
       rowTitle: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 },
       meta: { fontSize: 11, opacity: 0.6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+      // The secondary action on a row (`下次对话`). Deliberately quiet: it must
+      // never compete with the row itself, because it is the cheap alternative
+      // to clicking the row, not a second thing to read.
+      aside: {
+        flex: 'none', marginLeft: 'auto', padding: '1px 6px', borderRadius: 999,
+        border: '1px solid transparent', background: 'transparent', color: 'inherit',
+        font: 'inherit', fontSize: 10, lineHeight: 1.6, cursor: 'pointer',
+        opacity: 0.5, whiteSpace: 'nowrap',
+      },
+      asideOn: { opacity: 0.9, color: '#2563eb', borderColor: 'rgba(37,99,235,.35)' },
       topline: { display: 'flex', alignItems: 'center', gap: 6, padding: '2px 6px 8px' },
       summary: {
         fontSize: 11, opacity: 0.72, whiteSpace: 'nowrap',
@@ -202,6 +266,12 @@ window.__ModuleLoader__.load({
         border: '1px solid var(--ds-border, #d8dbe0)', background: 'transparent', color: 'inherit',
         font: 'inherit', fontSize: 12,
       },
+      // A price is four characters wide, not the width of the panel.
+      priceInput: {
+        width: 72, boxSizing: 'border-box', padding: '3px 6px', borderRadius: 6,
+        border: '1px solid var(--ds-border, #d8dbe0)', background: 'transparent', color: 'inherit',
+        font: 'inherit', fontSize: 12,
+      },
       iconButton: {
         border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer',
         fontSize: 13, lineHeight: 1, padding: '2px 4px', opacity: 0.7, flex: 'none',
@@ -231,6 +301,10 @@ window.__ModuleLoader__.load({
         background: 'rgba(37, 99, 235, 0.05)',
       },
       tag: { fontSize: 10, padding: '0 5px', borderRadius: 4, border: '1px solid currentColor', opacity: 0.7 },
+      // The new-conversation picker: a label and an inline row of chips.
+      heroPick: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+      heroPickLabel: { fontSize: 11, opacity: 0.55 },
+      heroNote: { fontSize: 11, opacity: 0.6 },
     }
 
     // ---- small pieces -------------------------------------------------------
@@ -291,7 +365,10 @@ window.__ModuleLoader__.load({
         }, toolName)))
     }
 
-    /** A selectable line: ✓ marker, label (with an optional tooltip), hint. */
+    /**
+     * A selectable line: ✓ marker, label (with an optional tooltip), hint, and
+     * an optional `aside` — a quiet secondary action that stops the click.
+     */
     function MenuRow(props) {
       const [hover, setHover] = useState(false)
       const disabled = props.disabled === true
@@ -327,7 +404,26 @@ window.__ModuleLoader__.load({
           ? h('span', null, props.label)
           : h(Tip, { text: props.tip }, h('span', null, props.label))),
       h('span', { style: { flex: 1 } }),
-      props.hint === undefined || props.hint === '' ? null : h('span', { style: styles.meta }, props.hint))
+      props.hint === undefined || props.hint === '' ? null : (
+        props.hintTip === undefined
+          ? h('span', { style: styles.meta }, props.hint)
+          : h(Tip, { text: props.hintTip }, h('span', { style: styles.meta }, props.hint))
+      ),
+      // A secondary action living inside the row: clicking it must not also
+      // click the row, or "use next time" would apply the kit right now.
+      props.aside === undefined ? null : h('button', {
+        type: 'button',
+        style: { ...styles.aside, ...(props.aside.on === true ? styles.asideOn : null) },
+        title: props.aside.tip,
+        'aria-label': `${props.label}：${props.aside.label}`,
+        onClick: (event) => {
+          event.stopPropagation()
+          props.aside.onClick()
+        },
+        onKeyDown: (event) => {
+          if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
+        },
+      }, props.aside.label))
     }
 
     /** A collapsible group header: caret, title with its count, optional action. */
@@ -454,6 +550,92 @@ window.__ModuleLoader__.load({
           }, saveLabel ?? '保存')))
     }
 
+    // ---- the new-conversation picker ---------------------------------------
+    /**
+     * The kit picker a brand-new conversation shows in the hero row.
+     *
+     * A conversation that has not sent a message usually has no agent yet, so
+     * there is nothing to "switch": the pick is stored as this Session's binding
+     * and installed the moment the agent appears — before the first request
+     * builds a prompt, which makes it the one switch that never re-bills the
+     * prompt cache. The row leaves with the hero at the first send.
+     *
+     * Chips instead of a popover on purpose: the hero area is empty by
+     * definition, so an inline row needs no measuring and cannot be clipped the
+     * way the header's panel would be.
+     */
+    function HeroKit(props) {
+      const sessionId = props.sessionId
+      // `preview` is a test seam for scripts/client-smoke.mjs, same as HeaderMenu.
+      const preview = props.preview ?? null
+      const [data, setData] = useState(preview?.data ?? null)
+      const [busy, setBusy] = useState(false)
+      const [message, setMessage] = useState('')
+      // `useSession` is a standard prop for session-scoped slots; a host that
+      // does not hand it over still only renders this slot in the hero phase.
+      const useSession = props.useSession
+      const blank = preview?.blank ?? (typeof useSession === 'function'
+        ? (useSession((snapshot) => snapshot?.blank) ?? true)
+        : true)
+
+      const refresh = useCallback(async () => {
+        if (typeof sessionId !== 'string' || sessionId === '') return
+        try {
+          setData(await load(sessionId))
+        } catch {
+          // "No agent yet" is a normal answer for this route, not something to
+          // paint red above the composer.
+        }
+      }, [sessionId])
+
+      useEffect(() => {
+        refresh()
+      }, [refresh])
+
+      const pick = async (name) => {
+        if (busy || typeof sessionId !== 'string' || sessionId === '') return
+        setBusy(true)
+        setMessage('')
+        try {
+          setData(await request({ action: 'bind', sessionId, name }))
+          const shown = name === '' ? '全部' : ([...(data?.kits ?? []), ...(data?.presets ?? [])].find((kit) => kit.name === name)?.title ?? name)
+          setMessage(`这个对话会用「${shown}」，下一条消息生效`)
+        } catch (error) {
+          setMessage(String(error?.message ?? error))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      if (!blank || data === null || typeof sessionId !== 'string' || sessionId === '') return null
+      const kits = [...(data.kits ?? []), ...(data.presets ?? [])]
+      // `bound` separates "this conversation chose 全部" from "nothing chosen
+      // yet": without it, a fresh conversation would claim 全部 even when the
+      // default kit is what will actually start it.
+      const current = data.bound === true
+        ? (typeof data.binding === 'string' ? data.binding : '')
+        : (typeof data.defaultKit === 'string' ? data.defaultKit : '')
+
+      return h('div', { style: styles.heroPick, 'data-loadout': 'hero-kit' },
+        h('span', { style: styles.heroPickLabel }, '工具套装'),
+        h('button', {
+          type: 'button',
+          style: { ...styles.tool, ...(current === '' ? styles.toolOn : null) },
+          disabled: busy,
+          onClick: () => pick(''),
+        }, '全部'),
+        kits.map((kit) => h('button', {
+          key: kit.name,
+          type: 'button',
+          title: kitLabel(kit),
+          style: { ...styles.tool, ...(kit.name === current ? styles.toolOn : null) },
+          disabled: busy,
+          onClick: () => pick(kit.name),
+        }, kit.title ?? kit.name)),
+        message === '' ? null : h('span', { style: styles.heroNote }, message),
+      )
+    }
+
     // ---- the header control -------------------------------------------------
     function HeaderMenu(props) {
       const sessionId = props.sessionId
@@ -462,6 +644,9 @@ window.__ModuleLoader__.load({
       const preview = props.preview ?? null
       const [open, setOpen] = useState(preview?.open === true)
       const [data, setData] = useState(preview?.data ?? null)
+      // Prices live in this browser, so the chip reads them at mount and again
+      // whenever the settings page announces a change.
+      const [prices, setPrices] = useState(readPrices)
       // Both kit groups start collapsed. The menu is a switcher, not a directory:
       // it has to show which set is on, not enumerate every set every time. A
       // collapsed group still shows the one active row, and clicking the head is
@@ -521,9 +706,12 @@ window.__ModuleLoader__.load({
       }, [refresh])
 
       // Another surface (the settings page, the /kit command) may have changed
-      // this conversation's binding while the chip sat idle.
+      // this conversation's binding — or the price settings — while the chip sat idle.
       useEffect(() => {
-        const sync = () => { refresh() }
+        const sync = () => {
+          setPrices(readPrices())
+          refresh()
+        }
         document.addEventListener('dsh-loadout:changed', sync)
         window.addEventListener('focus', sync)
         return () => {
@@ -569,6 +757,34 @@ window.__ModuleLoader__.load({
       const activePreset = base === 'kit' ? presets.find((kit) => kit.name === selection.kit) : undefined
       const applied = data?.appliedPlugins ?? []
       const available = data?.availableExtras ?? plugins.map((plugin) => plugin.id)
+      // Prompt size comes from the host's `contextPressure` projection; it is
+      // null until this conversation has sent its first request.
+      const contextTokens = Number(data?.context?.tokens) || 0
+      const price = switchPrice(contextTokens, prices)
+      const priceTip = switchPriceTip(contextTokens, prices)
+
+      /**
+       * `下次对话` — set what a new conversation starts from, without touching
+       * this one. It only writes `defaultKit`, so nothing is re-assembled and
+       * no cache is invalidated: the zero-cost way to change your mind.
+       */
+      const defaultAside = (name) => {
+        const isDefault = (data?.defaultKit ?? '') === name
+        return {
+          label: isDefault ? '✓ 新对话' : '下次对话',
+          on: isDefault,
+          tip: isDefault
+            ? '之后新建的对话默认用这套，当前对话不受影响。点一下取消，新对话回到「全部」。'
+            : '只改之后新建的对话：当前对话不变，也不触发任何重新计费。',
+          onClick: () => run({ action: 'default', name: isDefault ? '' : name }),
+        }
+      }
+
+      /** `默认 · ≈¥0.23`, and nothing at all when the switch is not worth a warning. */
+      const rowHint = (parts, active) => parts
+        .concat(active || price === '' ? [] : [price])
+        .filter((part) => part !== undefined && part !== '')
+        .join(' · ')
 
       const run = async (payload) => {
         setBusy(true)
@@ -690,7 +906,10 @@ window.__ModuleLoader__.load({
 
       const ledger = data?.ledger
       const saved = ledger?.savedTokens ?? 0
-      const summary = `当前：${label === '' ? '全部' : label}${extras.length === 0 ? '' : ` · 加挂 ${extras.length}`}${saved > 0 ? ` · 省 ~${formatTokens(saved)} tokens` : ''}`
+      // The context size is not a warning, it is the denominator of every price
+      // below: "why is this 0.23" needs "because this conversation is 200k".
+      const contextNote = contextTokens >= PRICE_MIN_TOKENS ? ` · 上下文 ~${formatTokens(contextTokens)}` : ''
+      const summary = `当前：${label === '' ? '全部' : label}${extras.length === 0 ? '' : ` · 加挂 ${extras.length}`}${saved > 0 ? ` · 省 ~${formatTokens(saved)} tokens` : ''}${contextNote}`
 
 
       const rootBody = h('div', null,
@@ -739,9 +958,10 @@ window.__ModuleLoader__.load({
         activeUserKit === undefined ? null : h(MenuRow, {
           key: 'active-kit',
           label: kitLabel(activeUserKit),
-          hint: activeUserKit.isDefault ? '默认' : '',
+          hint: rowHint([activeUserKit.isDefault ? '默认' : ''], true),
           active: true,
           indent: true,
+          aside: defaultAside(activeUserKit.name),
           onClick: () => run({ action: 'applyBase', base: 'kit', kit: activeUserKit.name }),
         }),
         groups.kits === true
@@ -750,8 +970,10 @@ window.__ModuleLoader__.load({
             .map((kit) => h(MenuRow, {
               key: kit.name,
               label: kitLabel(kit),
-              hint: kit.isDefault ? '默认' : '',
+              hint: rowHint([kit.isDefault ? '默认' : ''], false),
+              hintTip: price === '' ? undefined : priceTip,
               indent: true,
+              aside: defaultAside(kit.name),
               onClick: () => {
                 run({ action: 'applyBase', base: 'kit', kit: kit.name })
                 // Picking one puts the list away again; the row that stays is the
@@ -787,6 +1009,7 @@ window.__ModuleLoader__.load({
             hint: '只读',
             active: true,
             indent: true,
+            aside: defaultAside(activePreset.name),
             onClick: () => run({ action: 'applyBase', base: 'kit', kit: activePreset.name }),
           })
           : null,
@@ -796,9 +1019,11 @@ window.__ModuleLoader__.load({
             : presets.map((preset) => h(MenuRow, {
               key: preset.name,
               label: preset.title,
-              hint: '只读',
+              hint: rowHint(['只读'], activePreset !== undefined && activePreset.name === preset.name),
+              hintTip: price === '' ? undefined : priceTip,
               active: activePreset !== undefined && activePreset.name === preset.name,
               indent: true,
+              aside: defaultAside(preset.name),
               onClick: () => {
                 run({ action: 'applyBase', base: 'kit', kit: preset.name })
                 setGroups({ ...groups, presets: false })
@@ -1006,6 +1231,8 @@ window.__ModuleLoader__.load({
       // a new conversation start with", and a list of five kits does not answer it.
       // The test seam can seed it open so the card assertions never depend on a click.
       const [openSections, setOpenSections] = useState(preview?.openSections ?? { presets: false, kits: false })
+      // Prices are a browser-local preference: nothing on the host reads them.
+      const [prices, setPrices] = useState(readPrices)
 
       const refresh = useCallback(async () => {
         try {
@@ -1067,6 +1294,46 @@ window.__ModuleLoader__.load({
       // the chip does.
       const defaultKitRow = kits.find((kit) => kit.name === data.defaultKit)
       const defaultPresetRow = presets.find((preset) => preset.name === data.defaultKit)
+
+      // Prices only feed the chip's estimate, so they live in this browser
+      // rather than in the profile store: nothing on the host reads them, and a
+      // wrong number here can never change what a switch does.
+      const contextTokens = Number(data.context?.tokens) || 0
+      const price = switchPrice(contextTokens, prices)
+      const updatePrices = (patch) => {
+        const next = { ...prices, ...patch }
+        setPrices(next)
+        writePrices(next)
+        // The chip is a separate tree: tell it, the same way a kit change does.
+        announce()
+      }
+      const priceField = (key, label) => h('label', {
+        key,
+        style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, opacity: 0.8 },
+      },
+      h('span', null, label),
+      h('input', {
+        type: 'number',
+        min: 0,
+        step: 0.05,
+        style: styles.priceInput,
+        'aria-label': label,
+        value: String(prices[key]),
+        onChange: (event) => {
+          const parsed = Number(event.target.value)
+          updatePrices({ [key]: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0 })
+        },
+      }))
+      const priceSection = h('div', { key: 'pricing', style: styles.section },
+        h('div', { style: styles.sectionTitle }, '切换一次大概多贵'),
+        h('div', { style: { display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' } },
+          priceField('miss', '未命中 ¥/百万'),
+          priceField('hit', '命中 ¥/百万')),
+        h('div', { style: styles.hint },
+          contextTokens >= PRICE_MIN_TOKENS
+            ? `这段对话约 ${formatTokens(contextTokens)} tokens：现在切换一次，约 ${price === '' ? '不到一分钱' : price}。`
+            : '这段对话还很短，切换几乎不花钱；上下文过 20k 之后标题栏才会显示估算。',
+          ' 价格只用于估算，不影响切换本身。'))
 
       const saveDraft = async () => {
         if (draft === null) return
@@ -1347,6 +1614,7 @@ window.__ModuleLoader__.load({
                     }))
                   : null,
               ]))),
+        priceSection,
         h('div', { style: styles.footer }, `存储：${data.source ?? '(未知)'}　新对话默认：${
           data.defaultKit === '' ? '(未设置)' : data.defaultKit === '@dsh' ? '仅内置' : data.defaultKit}`),
         h('div', { style: { ...styles.hint, marginTop: 4, lineHeight: 1.6 } },
@@ -1400,6 +1668,19 @@ window.__ModuleLoader__.load({
           order: -100,
           extra: { inject: (sessionId) => ({ sessionId }) },
         }, HeaderMenu)
+        // The new-conversation picker: the one moment where switching is free,
+        // because the agent — and its first request — does not exist yet. It
+        // lives in the hero row beside the workspace and agent-preset chips, and
+        // unmounts at the first send, which is exactly when the choice stops
+        // being free.
+        registerSurface(ctx, {
+          name: 'conversation.hero.options',
+          order: 10,
+          // Session-scoped slots get their Session id through `inject`; without
+          // it the picker could neither read this conversation's binding nor
+          // write one (the entry only renders when a Session exists).
+          extra: { inject: (sessionId) => ({ sessionId }) },
+        }, HeroKit)
         // The settings page: the full editor and the place kits are stored from.
         registerSurface(ctx, {
           name: 'settings.section',

@@ -107,6 +107,26 @@ This conversation keeps 18 tools · about 1.1k tokens · All is about 3.0k · th
 
 Each kit card also carries its own estimate (`≈1.1k tokens`). The number is an **estimate**: each tool definition (name, description, parameter schema) is serialised and divided by 3.5 characters per token, covering only the tool list — not conversation history, the system prompt, or prompt-cache behaviour. The UI labels it "estimate" for that reason. The kept side is measured from the schemas the runtime actually sends; the "All" side comes from the tool layer's definition table.
 
+## What a switch costs
+
+Switching is not free. The request prefix is ordered system prompt → tool definitions → history → this turn's input, and the prompt cache matches on that prefix: change the tool definitions and everything after them is billed again at the miss price. So the **cost scales with context length, the benefit with the number of turns**:
+
+- Pick at the start: it costs almost nothing and saves on every turn after.
+- Switch mid-conversation at 150k tokens: roughly one full-context miss (¥0.2 on this machine), paid back slowly by the ~1.9k saved per turn.
+- After a long idle gap, a restart, or a compaction: the cache is cold anyway, so a switch there is nearly free.
+
+The menu quotes `≈¥0.2x` on every kit that is not in use, and the status line carries `· context ~150k`; below 20k neither is shown, because at that size the money is noise. The number comes from the host token meter's `contextPressure` projection (the provider-reported size of the last request plus whatever the surface has grown by since), not from guessing at the session file. Prices default to ¥2 / ¥0.5 per million tokens (miss / hit) and are editable under "切换一次大概多贵" in Settings; a wrong price can only make the estimate wrong.
+
+If you do not want to pay it now, click **`下次对话`** at the end of the row: it writes `defaultKit` only, leaves this conversation and its cache untouched, and takes effect the next time you start a conversation.
+
+## Picking a kit for a new conversation
+
+Above the composer of a blank conversation there is a "工具套装" row: one button for `全部`, one for each of your kits, and one for each of the five presets. Click one and this conversation starts with that kit from its first message. The row leaves with the welcome area at the first send.
+
+This is the one switch that is genuinely free: there is no agent yet, so no request prefix exists and the tool definitions cannot invalidate anything. Picking here is cheaper than switching after the first message.
+
+The pick binds this conversation only; it does not change the default for new conversations — that still lives in Settings. On a host without this slot (an older DSH), the row simply does not appear and nothing else changes.
+
 ## Files
 
 - Kit data: `~/.dsh/loadout.json` (schema-versioned; the older `~/.dsh/plugin-kits.json` is read once, then left behind).

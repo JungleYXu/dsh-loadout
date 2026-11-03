@@ -118,6 +118,20 @@ function makeCtx() {
   built.commands = commands
   built.routes = routes
   built.sessions = { get: (sessionId) => sessions.get(sessionId) }
+  // The token meter publishes the prompt size as a session projection. The fake
+  // host answers from `projectionTokens`, so a test can move the number.
+  built.projectionTokens = { value: undefined }
+  built.sessionProjections = {
+    snapshot(session) {
+      const value = built.projectionTokens.value
+      return {
+        asOfSeq: 0,
+        values: value === undefined
+          ? {}
+          : { contextPressure: { pressureTokens: value, projectedTokens: value, contextWindow: 128000 } },
+      }
+    },
+  }
   built.sessionTable = sessions
   built.agentTable = agents
   return built
@@ -148,6 +162,7 @@ function childFor(dependencies, built, commands, routes) {
   // The plugin injects `sessions` optionally; a fake host without it must still
   // work (that is the 0.x path), so this mirrors the real `optional` contract.
   if (dependencies.includes('sessions')) child.sessions = built.sessions
+  if (dependencies.includes('sessionProjections')) child.sessionProjections = built.sessionProjections
   return child
 }
 
@@ -981,6 +996,57 @@ check('next save moves to loadout.json', existsSync(join(legacyHome, '.dsh', 'lo
 process.env.USERPROFILE = savedProfile
 process.env.HOME = savedHome
 rmSync(legacyHome, { recursive: true, force: true })
+
+// ---- the client is told how big the prompt is -------------------------------
+// A switch costs prompt size × the miss/hit price gap, so the host has to hand
+// over the token meter's own number — not a guess from the session file.
+const pricedAgent = makeAgent()
+sessionAgentOf.agent = pricedAgent
+const unsampled = await getState(pricedAgent.id)
+check('no sample yet means no context size', unsampled.body.context?.tokens === null, JSON.stringify(unsampled.body.context))
+ctx.projectionTokens.value = 150000
+const sampled = await getState(pricedAgent.id)
+check('the context size comes from contextPressure', sampled.body.context?.tokens === 150000, JSON.stringify(sampled.body.context))
+ctx.projectionTokens.value = undefined
+const meterGone = await getState(pricedAgent.id)
+check('a host without a token meter still answers', meterGone.body.context?.tokens === null, JSON.stringify(meterGone.body.context))
+
+// ---- a blank conversation can choose its kit before it has an agent ---------
+// This is the free switch: no agent means no request prefix, so the choice is
+// stored as a binding and applied the moment the agent appears — before the
+// first prompt is built.
+const unknownPick = await post({ action: 'bind', sessionId: 'session-blank', name: 'pick-kit' })
+check('binding an unknown kit is refused', unknownPick.status === 404, `${unknownPick.status} ${unknownPick.body?.message ?? ''}`)
+
+await ctx.registered.get('kit_create').execute(
+  { name: 'pick-kit', title: '新建用', builtins: ['read'], plugins: [] }, exec(agentB))
+const bound = await post({ action: 'bind', sessionId: 'session-blank', name: 'pick-kit' })
+check('a blank conversation can be bound to a kit',
+  bound.status === 200 && bound.body?.ok === true && bound.body?.bound === true && bound.body?.binding === 'pick-kit',
+  JSON.stringify({ status: bound.status, bound: bound.body?.bound, binding: bound.body?.binding }))
+
+const beforeAgent = await getState('session-blank')
+check('the binding is stored before the agent exists',
+  beforeAgent.body?.bound === true && beforeAgent.body?.binding === 'pick-kit',
+  JSON.stringify({ bound: beforeAgent.body?.bound, binding: beforeAgent.body?.binding }))
+
+// The first request is assembled after this, so the pick costs nothing.
+const pickAgent = makeAgent(undefined, { id: 'session-blank' })
+sessionAgentOf.agent = pickAgent
+for (const handler of ctx.handlers.get('agent/created') ?? []) handler(pickAgent)
+const afterAgent = await getState('session-blank')
+check('the pick applies as soon as the agent appears',
+  afterAgent.body?.binding === 'pick-kit' && afterAgent.body?.selection?.kit === 'pick-kit',
+  JSON.stringify({ binding: afterAgent.body?.binding, selection: afterAgent.body?.selection }))
+check('the picked kit is what the first request will see',
+  keptOf(pickAgent).includes('read'), keptOf(pickAgent).join(','))
+
+const cleared = await post({ action: 'bind', sessionId: 'session-blank', name: '' })
+check('binding 全部 clears the pick', cleared.status === 200 && cleared.body?.bound === true && cleared.body?.binding === '',
+  JSON.stringify({ bound: cleared.body?.bound, binding: cleared.body?.binding }))
+const clearedState = await getState('session-blank')
+check('the cleared pick reads back as 全部', clearedState.body?.bound === true && clearedState.body?.binding === '',
+  JSON.stringify({ bound: clearedState.body?.bound, binding: clearedState.body?.binding }))
 
 // ---- report ----------------------------------------------------------------
 rmSync(scratch, { recursive: true, force: true })

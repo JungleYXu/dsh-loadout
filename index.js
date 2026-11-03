@@ -478,6 +478,12 @@ export function apply(ctx, config = {}) {
    * parentSession / origin). Optional for the same reason as sessionController.
    */
   let sessions
+  /**
+   * The session-projection registry, read only for `contextPressure`: how big
+   * this conversation's prompt is right now. Optional — a host without the
+   * token meter simply shows no price estimate.
+   */
+  let sessionProjections
   let lastAgent
   /** Every tool name this profile can expose; filled by learnTools below. */
   const knownTools = new Set(OWN_TOOLS)
@@ -511,6 +517,40 @@ export function apply(ctx, config = {}) {
       return sessions.get?.(sessionId)?.header
     } catch {
       return undefined
+    }
+  }
+
+  /**
+   * How large this conversation's prompt is right now, in tokens — the part a
+   * kit switch makes the provider bill again at the miss price.
+   *
+   * Read from the `contextPressure` session projection: the provider-reported
+   * prompt size of the last request, plus whatever the surface has grown by
+   * since that sample. O(1), no model call, and the same number the client
+   * shows as occupancy. `tokens: null` before the first request — which is
+   * exactly when a switch costs nothing.
+   */
+  function contextOf(agent) {
+    const sessionId = sessionIdOf(agent)
+    if (sessionId === undefined || sessionProjections === undefined || sessions === undefined) {
+      return { tokens: null }
+    }
+    try {
+      const session = sessions.get?.(sessionId)
+      if (session === undefined || session === null) return { tokens: null }
+      const { values } = sessionProjections.snapshot(session, ['contextPressure'])
+      const pressure = values?.contextPressure
+      const tokens = pressure?.projectedTokens ?? pressure?.pressureTokens
+      if (typeof tokens !== 'number' || !Number.isFinite(tokens) || tokens <= 0) {
+        return { tokens: null, window: pressure?.contextWindow ?? null }
+      }
+      return {
+        tokens: Math.round(tokens),
+        window: typeof pressure?.contextWindow === 'number' ? pressure.contextWindow : null,
+      }
+    } catch {
+      // The registry is optional; a host without it just has no number to show.
+      return { tokens: null }
     }
   }
 
@@ -1471,6 +1511,14 @@ export function apply(ctx, config = {}) {
       // '' when the conversation has none (a subagent). The chip reads this
       // instead of inferring "no kit" from the live label.
       binding: bindingOf(sessionIdOf(agent)) ?? '',
+      // `binding` cannot tell "chose 全部" from "has not chosen yet" (both read
+      // as ''); the new-conversation picker shows the default kit until one is
+      // chosen, so the distinction has to travel with the snapshot.
+      bound: bindingOf(sessionIdOf(agent)) !== undefined,
+      // Prompt size, so the chip can price a switch without guessing: swapping
+      // the kit rewrites the tool definitions, and every token after them is
+      // billed again at the miss price.
+      context: contextOf(agent),
       ledger,
       catalog,
       tools: toolCatalog(),
@@ -2016,7 +2064,18 @@ export function apply(ctx, config = {}) {
             // and an unknown id still answer from the last agent seen.
             const sessionId = new URL(req.url ?? '', 'http://localhost').searchParams.get('sessionId') ?? ''
             const found = await agentForSession(sessionId)
-            return sendJson(res, 200, { ok: true, ...(found.ok ? snapshot(found.agent) : snapshot()) })
+            if (found.ok) return sendJson(res, 200, { ok: true, ...snapshot(found.agent) })
+            const view = snapshot()
+            // A conversation that has not sent a message yet may have no agent; its
+            // binding is still readable by Session id, which is what lets the
+            // new-conversation picker show the kit this conversation will start with.
+            if (sessionId !== '') {
+              view.binding = bindingOf(sessionId) ?? ''
+              // "Chose 全部" and "never chose" both read as an empty binding, and
+              // they mean different kits to show in the picker.
+              view.bound = bindingOf(sessionId) !== undefined
+            }
+            return sendJson(res, 200, { ok: true, ...view })
           }
           if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只支持 GET/POST' })
           const body = await readJson(req)
@@ -2082,6 +2141,30 @@ export function apply(ctx, config = {}) {
               const result = useSelection(found.agent, { base: BASE_KIT, kit: kit.name, extras: [] })
               if (!result.ok) return sendJson(res, 400, { ok: false, error: result.reason })
               return sendJson(res, 200, { ok: true, kit: kit.name, ...snapshot(found.agent) })
+            }
+            case 'bind': {
+              // A conversation that has not sent anything may have no agent yet, so
+              // there is nothing to switch — but the binding is keyed by Session id,
+              // so the pick can be recorded now and installed the moment the agent
+              // exists. That happens before the first request builds a prompt, which
+              // is why this pick costs nothing (no cache reset).
+              const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+              if (sessionId === '') return sendJson(res, 400, { ok: false, error: '缺少会话 id' })
+              const wanted = typeof body.name === 'string' ? body.name.trim() : ''
+              const value = wanted === '' ? null : wanted
+              if (value !== null && value !== DEFAULT_DSH && resolveKit(lastAgent, value) === undefined) {
+                return sendJson(res, 404, { ok: false, error: `没有套装「${value}」` })
+              }
+              book.assignments[sessionId] = value
+              save()
+              // With an agent this applies right away; without one the reply still
+              // carries the stored binding, which is all the picker needs to show.
+              const bound = await agentForSession(sessionId)
+              if (!bound.ok) return sendJson(res, 200, { ok: true, ...snapshot(), binding: value ?? '', bound: true })
+              rememberAgent(bound.agent)
+              // `bound` tells the picker that an empty binding was a choice, not
+              // the absence of one — the same distinction the GET branch makes.
+              return sendJson(res, 200, { ok: true, ...snapshot(bound.agent), bound: true })
             }
             case 'create': operations.create(body); break
             case 'update': operations.update(body); break
@@ -2210,6 +2293,9 @@ export function apply(ctx, config = {}) {
   })
   optional(['sessions'], (child) => {
     sessions = child.sessions
+  })
+  optional(['sessionProjections'], (child) => {
+    sessionProjections = child.sessionProjections
   })
 
   ctx.logger?.info(`dsh-loadout: ${book.kits.length} 个我的套装 + ${presets.length} 个预设，默认 ${book.defaultKit || '(未设置)'}，来源 ${book.source}`)

@@ -45,7 +45,7 @@ const React = {
 
 const registrations = []
 let injections = 0
-const SLOTS = ['settings.section', 'conversation.session.header.actions']
+const SLOTS = ['settings.section', 'conversation.session.header.actions', 'conversation.hero.options']
 
 const slots = {
   inject(name, callback) {
@@ -83,7 +83,9 @@ globalThis.window = {
 }
 
 // fetch must not run during load; it only runs inside effects, which the fake React never invokes.
-globalThis.fetch = () => Promise.reject(new Error('unexpected network call during load'))
+// The indirection lets one test swap in a recorder and click a row for real.
+let fetchImpl = () => Promise.reject(new Error('unexpected network call during load'))
+globalThis.fetch = (...args) => fetchImpl(...args)
 globalThis.AbortController = class { abort() {} signal = {} }
 
 // The client bundle is plain script text (no exports); evaluate it with `window` in scope.
@@ -95,13 +97,21 @@ check('declares inject', Array.isArray(loaded?.inject) && loaded.inject.includes
 
 loaded?.apply(ctx)
 
-check('slots.inject called twice', injections === 2, String(injections))
-check('two surfaces registered', registrations.length === 2, String(registrations.length))
+check('slots.inject called once per surface', injections === 3, String(injections))
+check('three surfaces registered', registrations.length === 3, String(registrations.length))
 
 const registration = registrations.find((entry) => entry.definition?.name === 'settings.section')
 const header = registrations.find((entry) => entry.definition?.name === 'conversation.session.header.actions')
+const hero = registrations.find((entry) => entry.definition?.name === 'conversation.hero.options')
 check('settings panel registered', registration !== undefined)
 check('header chip registered', header !== undefined)
+check('new-conversation picker registered', hero !== undefined)
+// The slot renders only when a Session exists, and a Session-scoped entry gets
+// its id through `inject`; without this the picker would render with no session
+// to read or bind.
+check('the picker is handed its Session id',
+  typeof hero?.definition?.inject === 'function' && hero.definition.inject('session-x').sessionId === 'session-x',
+  typeof hero?.definition?.inject)
 
 const definition = registration?.definition ?? {}
 check('slot name', definition.name === 'settings.section', String(definition.name))
@@ -299,6 +309,108 @@ if (menu !== undefined) {
   check('新建套装 is offered under 我的套装', kitsOpenText.includes('＋ 新建套装'), kitsOpenText.slice(0, 400))
 }
 
+// ---- the price of a switch, next to the switch ------------------------------
+// Switching rewrites the tool definitions, so everything after them in the prefix
+// is paid again at the miss price. The number is meaningless without the context
+// that produced it, so the status line names the size too.
+const priced = { ...fixture, context: { tokens: 200000 } }
+let pricedMenu
+try {
+  pricedMenu = expand(header.component({
+    sessionId: 'session-1',
+    preview: { open: true, data: priced, groups: { kits: true, presets: true, extras: true, applied: false } },
+  }))
+} catch (error) {
+  failures.push(`priced menu render threw: ${error instanceof Error ? error.message : String(error)}`)
+}
+
+if (pricedMenu !== undefined) {
+  const pricedText = textOf(pricedMenu)
+  check('the status line states the context size', pricedText.includes('上下文 ~200k'), pricedText.slice(0, 300))
+  check('an inactive kit quotes one switch', pricedText.includes('≈¥0.30'), pricedText.slice(0, 900))
+  const activePriced = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' && textOf(node).includes('我的套'))
+  check('the kit already in use quotes no price', !textOf(activePriced[0]).includes('≈¥'), textOf(activePriced[0]))
+
+  const nextButtons = nodesIn(pricedMenu, (node) => node.type === 'button' && textOf(node) === '下次对话')
+  check('inactive kits offer 下次对话', nextButtons.length >= 1, String(nextButtons.length))
+  check('下次对话 says it leaves this conversation alone',
+    nextButtons.every((node) => String(node.props?.title ?? '').includes('当前对话不变')), String(nextButtons.length))
+
+  // Clicking it must only write defaultKit: no base/apply, no re-assembly, no cost.
+  const posts = []
+  fetchImpl = (url, init) => {
+    posts.push({ url, body: JSON.parse(String(init?.body ?? '{}')) })
+    return Promise.resolve({ ok: true, status: 200, json: async () => priced })
+  }
+  const target = nextButtons.find((node) => String(node.props?.title ?? '').includes('当前对话不变'))
+  target?.props?.onClick?.({ stopPropagation() {} })
+  check('下次对话 posts a default action for that kit',
+    posts.length === 1 && posts[0]?.body?.action === 'default' && posts[0]?.body?.name === 'other',
+    JSON.stringify(posts))
+  check('下次对话 leaves the current selection untouched',
+    posts[0]?.body?.base === undefined && posts[0]?.body?.apply === undefined && posts[0]?.body?.applySet === undefined,
+    JSON.stringify(posts[0]?.body))
+
+  // Below 20k the switch is lost in the noise, and a number there would be noise.
+  const shortMenu = expand(header.component({
+    sessionId: 'session-1',
+    preview: { open: true, data: { ...fixture, context: { tokens: 5000 } }, groups: { kits: true, presets: true, extras: false } },
+  }))
+  const shortText = textOf(shortMenu)
+  check('a short conversation is not quoted a price', !shortText.includes('≈¥'), shortText.slice(0, 600))
+  check('a short conversation does not advertise its size', !shortText.includes('上下文'), shortText.slice(0, 300))
+}
+
+// ---- the blank-conversation picker -----------------------------------------
+// This is the one place a switch is free: the agent does not exist yet, so no
+// request prefix has been built and nothing can be re-billed.
+try {
+  const picker = expand(hero.component({ sessionId: 'session-new', preview: { blank: true, data: fixture } }))
+  const chips = nodesIn(picker, (node) => node.props?.type === 'button')
+  const labels = chips.map((node) => textOf(node))
+  check('the picker offers 全部 plus every kit and preset',
+    labels[0] === '全部' && labels.includes('我的套') && labels.includes('另一套') && labels.includes('写作'),
+    JSON.stringify(labels))
+
+  // Nothing chosen yet: the kit that will actually start this conversation is
+  // the default one, so that is the chip that reads as on.
+  const lit = chips.filter((node) => node.props?.style?.color === '#2563eb').map((node) => textOf(node))
+  check('an untouched conversation shows the default kit as the pick',
+    lit.length === 1 && lit[0] === '我的套', JSON.stringify(lit))
+
+  // "Chose 全部" and "never chose" look the same in the data; `bound` tells them
+  // apart so the picker does not claim 全部 over a real default.
+  const all = expand(hero.component({ sessionId: 'session-new', preview: { blank: true, data: { ...fixture, bound: true, binding: '' } } }))
+  const allLit = nodesIn(all, (node) => node.props?.type === 'button' && node.props?.style?.color === '#2563eb').map((node) => textOf(node))
+  check('a conversation that chose 全部 shows 全部 as the pick',
+    allLit.length === 1 && allLit[0] === '全部', JSON.stringify(allLit))
+
+  const bound = expand(hero.component({ sessionId: 'session-new', preview: { blank: true, data: { ...fixture, bound: true, binding: 'other' } } }))
+  const boundLit = nodesIn(bound, (node) => node.props?.type === 'button' && node.props?.style?.color === '#2563eb').map((node) => textOf(node))
+  check('a conversation that chose a kit shows that kit as the pick',
+    boundLit.length === 1 && boundLit[0] === '另一套', JSON.stringify(boundLit))
+
+  // Picking must only bind this conversation: no base/apply, and no session-wide
+  // default, which would change every future conversation too.
+  const binds = []
+  fetchImpl = (url, init) => {
+    binds.push({ url, body: JSON.parse(String(init?.body ?? '{}')) })
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...fixture, bound: true, binding: 'other' }) })
+  }
+  chips.find((node) => textOf(node) === '另一套')?.props?.onClick?.()
+  check('picking a kit binds this conversation only',
+    binds.length === 1 && binds[0]?.body?.action === 'bind' && binds[0]?.body?.sessionId === 'session-new' && binds[0]?.body?.name === 'other',
+    JSON.stringify(binds))
+  check('picking a kit leaves the default alone',
+    binds[0]?.body?.base === undefined && binds[0]?.body?.apply === undefined && binds[0]?.body?.default === undefined,
+    JSON.stringify(binds[0]?.body))
+
+  // Once the conversation has a message the hero is gone, and so is the picker.
+  check('the picker leaves with the hero', hero.component({ sessionId: 'session-new', preview: { blank: false, data: fixture } }) === null)
+} catch (error) {
+  failures.push(`hero picker render threw: ${error instanceof Error ? error.message : String(error)}`)
+}
+
 // ---- the chip stays a single button while closed ---------------------------
 try {
   const chip = header.component({ sessionId: 'session-1' })
@@ -412,12 +524,14 @@ try {
   applyError = error
 }
 check('apply survives a missing slot', applyError === undefined, String(applyError))
-check('the remaining surface still registers',
-  keptRegistrations.length === 1 && keptRegistrations[0].name === 'settings.section',
+check('the remaining surfaces still register',
+  keptRegistrations.length === 2
+    && keptRegistrations.some((entry) => entry.name === 'settings.section')
+    && keptRegistrations.some((entry) => entry.name === 'conversation.hero.options'),
   JSON.stringify(keptRegistrations.map((entry) => entry.name)))
 
 if (failures.length === 0) {
-  console.log('ok: client bundle loads, renders the new header menu (groups, check marks, tooltips, footer), and renders the settings panel')
+  console.log('ok: client bundle loads, renders the new-conversation picker, the header menu (groups, check marks, tooltips, footer), and the settings panel')
   process.exit(0)
 }
 console.log(`FAILED (${failures.length}):`)
