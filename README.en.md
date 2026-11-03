@@ -115,9 +115,13 @@ Switching is not free. The request prefix is ordered system prompt → tool defi
 - Switch mid-conversation at 150k tokens: roughly one full-context miss (¥0.2 on this machine), paid back slowly by the ~1.9k saved per turn.
 - After a long idle gap, a restart, or a compaction: the cache is cold anyway, so a switch there is nearly free.
 
-The menu quotes `≈¥0.2x` on every kit that is not in use — and on the `全部` / `仅内置` rows, since those switch tools too — and the status line carries `· context ~150k`; below 20k neither is shown, because at that size the money is noise. Hovering anywhere on the row explains where the number comes from ("切换会改变插件清单，此对话上下文（约 150k tokens），下一条要按未命中价重新计算一次，≈¥0.23；之后恢复至缓存价。"). The number comes from the host token meter's `contextPressure` projection (the provider-reported size of the last request plus whatever the surface has grown by since), not from guessing at the session file. The ¥2 / ¥0.5 per million tokens (miss / hit) are fixed estimates: they only feed the hint, and no setting changes what a switch does.
+The menu quotes `≈¥0.2x` on every kit that is not in use — and on the `全部` / `仅内置` rows, since those switch tools too — and the status line carries `· context ~150k`. The row labels go quiet below 20k, where the money is noise, but the line under the reminder in the footer always states the bill:
 
-The `加挂` group counts `attached / still attachable` (e.g. `加挂（1/5）`), and its header tooltip says that attaching plugins rewrites the tool list just the same, so the next message is billed once more.
+> 本对话上下文（约 150k tokens），下一条未命中价≈¥0.23，之后恢复至缓存价。
+
+It lives there rather than in a per-row tooltip because the reminder block is the paragraph people read; a tooltip has to be found first. The number comes from the host token meter's `contextPressure` projection (the provider-reported size of the last request plus whatever the surface has grown by since), not from guessing at the session file. The ¥2 / ¥0.5 per million tokens (miss / hit) are fixed estimates: they only feed the hint, and no setting changes what a switch does.
+
+The `加挂` group counts `in this conversation / plugins there are at all` (e.g. `加挂（1/5）`), so under the `全部` base it reads `6/6`: all six plugins are already in, and there is nothing left to attach. Its tooltip only explains the verb ("在当前选择上临时加开插件，不新建套装。已经包含的插件不能再加。"); the bill is stated once, at the bottom.
 
 The last line of the conversation menu's footer is the one that matters most: **pick the right kit when you start a conversation**. Switching mid-conversation changes the tool list and the next message is billed at the miss price once, then back to the cached price. Costly on long conversations, negligible on short ones — and essentially free after an idle gap, a compaction, or a restart.
 

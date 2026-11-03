@@ -261,10 +261,10 @@ if (menu !== undefined) {
   // Presets are back from 0.12: they are the quickest way to start a known kind
   // of work, they stay read-only, and each one now says what it leaves out.
   check('menu lists the presets again', allText.includes('预设套装（5）') && allText.includes('写作') && allText.includes('仅聊天'), allText.slice(0, 400))
-  // 加挂 reads as "attached / attachable": the second number is what is still
-  // missing from the current selection, so the group answers "how much room is
-  // left" without opening it.
-  check('加挂 counts attached of attachable', allText.includes('加挂（1/1）'), allText.slice(0, 400))
+  // 加挂 reads as "in this conversation / plugins there are at all", so the
+  // group answers "how much room is left" without opening it — and under 全部
+  // it reads 2/2 rather than 0/2, because everything is already in.
+  check('加挂 counts in-conversation plugins of all plugins', allText.includes('加挂（2/2）'), allText.slice(0, 400))
   check('footer text is the approved sentence', allText.includes(FOOTER))
   check('footer carries the before-you-start reminder',
     allText.includes('重要提醒') && allText.includes('建议新建对话时直接选择合适套装'), allText.slice(-600))
@@ -351,12 +351,15 @@ if (pricedMenu !== undefined) {
   const allRow = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' && textOf(node).trim().startsWith('全部'))
   check('全部 quotes the same one-switch price', allRow.length === 1 && textOf(allRow[0]).includes('≈¥0.30'), JSON.stringify(allRow.map(textOf)))
 
-  // The sentence belongs to the whole row: the hint is four glyphs wide, and a
-  // tooltip hidden behind it is a tooltip nobody finds.
-  const pricedRows = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' &&
-    typeof node.props?.title === 'string' && node.props.title.includes('按未命中价重新计算一次'))
-  check('a switching row explains itself on hover', pricedRows.length >= 2, JSON.stringify(pricedRows.map(textOf)))
-  check('the row tooltip names the context it would re-bill', pricedRows[0]?.props?.title.includes('约 200k tokens'), String(pricedRows[0]?.props?.title))
+  // The bill is stated once, under the reminder — not per row. A tooltip has to
+  // be found; the reminder is the paragraph people actually read.
+  check('the footer states the bill under the reminder',
+    pricedText.includes('本对话上下文（约 200k tokens），下一条未命中价≈¥0.30，之后恢复至缓存价。'),
+    pricedText.slice(-400))
+  const rowsWithOldTip = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' &&
+    typeof node.props?.title === 'string' && node.props.title.includes('按未命中价重新计算'))
+  check('no row repeats the bill as a tooltip', rowsWithOldTip.length === 0,
+    JSON.stringify(rowsWithOldTip.map(textOf)))
 
   // What new conversations start from is a global decision and belongs to
   // 设置 → 装备栏. This menu is scoped to one conversation, so it must not grow
@@ -375,8 +378,38 @@ if (pricedMenu !== undefined) {
     preview: { open: true, data: { ...fixture, context: { tokens: 5000 } }, groups: { kits: true, presets: true, extras: false } },
   }))
   const shortText = textOf(shortMenu)
-  check('a short conversation is not quoted a price', !shortText.includes('≈¥'), shortText.slice(0, 600))
-  check('a short conversation does not advertise its size', !shortText.includes('上下文'), shortText.slice(0, 300))
+  const shortRows = nodesIn(shortMenu, (node) => node.props?.role === 'menuitem').map(textOf).join('|')
+  check('a short conversation quotes no price on the rows', !shortRows.includes('≈¥'), shortRows.slice(0, 400))
+  // The footer does not use that floor: it is one line whether the number is
+  // ¥0.008 or ¥0.30, and it is the sentence that explains the rows.
+  check('the footer still states the bill, however small',
+    shortText.includes('本对话上下文（约 5.0k tokens），下一条未命中价≈¥0.00'), shortText.slice(-300))
+
+  // A conversation already on the 全部 base: every plugin is in, so 加挂 reads
+  // full — it used to read 0/2 there, which looked like nothing had loaded.
+  const fullMenu = expand(header.component({
+    sessionId: 'session-1',
+    preview: {
+      open: true,
+      data: {
+        ...fixture,
+        selection: { base: 'all', kit: null, extras: [] },
+        appliedPlugins: ['alpha', 'demo'],
+        label: '全部',
+        context: { tokens: 200000 },
+      },
+      groups: { kits: false, presets: false, extras: false, applied: false },
+    },
+  }))
+  const fullText = textOf(fullMenu)
+  check('加挂 reads full under 全部', fullText.includes('加挂（2/2）'), fullText.slice(0, 300))
+  const fullRows = nodesIn(fullMenu, (node) => node.props?.role === 'menuitem')
+  const pricedBase = ['全部', '仅内置'].filter((label) => {
+    const row = fullRows.find((node) => textOf(node).replace(/^[\s✓]+/, '').startsWith(label))
+    return row !== undefined && textOf(row).includes('≈¥')
+  })
+  check('both base rows quote a price, even the one in use', pricedBase.length === 2,
+    JSON.stringify(fullRows.map(textOf)))
 }
 
 // ---- the blank-conversation picker (composer row, next to 标准模式) ----------

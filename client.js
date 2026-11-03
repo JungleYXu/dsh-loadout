@@ -137,11 +137,17 @@ window.__ModuleLoader__.load({
       return `≈¥${yuan < 0.1 ? yuan.toFixed(3) : yuan.toFixed(2)}`
     }
 
-    /** The sentence behind a price, spelled out for the row's tooltip. */
-    function switchPriceTip(tokens, prices) {
-      const n = Math.round(Number(tokens) || 0)
-      const price = switchPrice(n, prices)
-      return `切换会改变插件清单，此对话上下文（约 ${formatTokens(n)} tokens），下一条要按未命中价重新计算一次${price === '' ? '' : `，${price}`}；之后恢复至缓存价。`
+    /**
+     * The same estimate without the "too small to mention" floor. The row
+     * labels stay quiet below 20k, but the footer states the bill for every
+     * conversation: it is the sentence that explains what those labels mean,
+     * and it costs one line whether the number is 0.001 or 0.23.
+     */
+    function switchCost(tokens, prices) {
+      const n = Number(tokens)
+      if (!Number.isFinite(n) || n <= 0) return ''
+      const yuan = (n / 1e6) * Math.max(0, prices.miss - prices.hit)
+      return `≈¥${yuan < 0.1 ? yuan.toFixed(3) : yuan.toFixed(2)}`
     }
 
     // Every mutation fans out to the other panel. The chip and the settings page
@@ -256,6 +262,9 @@ window.__ModuleLoader__.load({
       // The one paragraph in the panel that asks for a decision before the
       // first message, so it is not dimmed with the rest of the footer.
       warnLine: { marginTop: 6, color: '#b45309', opacity: 0.95, lineHeight: 1.6 },
+      // The bill, stated once under the reminder: quieter than the warning
+      // because it explains the numbers rather than asking for anything.
+      billLine: { marginTop: 4, opacity: 0.75, lineHeight: 1.6 },
       error: { fontSize: 11, color: '#dc2626', marginTop: 6, lineHeight: 1.5 },
       notice: { fontSize: 11, color: '#2563eb', marginTop: 6, lineHeight: 1.5 },
       input: {
@@ -393,10 +402,6 @@ window.__ModuleLoader__.load({
         role: 'menuitem',
         tabIndex: disabled ? undefined : 0,
         'aria-disabled': disabled ? 'true' : 'false',
-        // The price explains the whole row, not just the number at its end: the
-        // hint is four glyphs wide, and a tooltip you have to find with the
-        // pointer is a tooltip nobody reads.
-        title: props.hintTip,
         style,
         onMouseEnter: () => setHover(true),
         onMouseLeave: () => setHover(false),
@@ -545,10 +550,12 @@ window.__ModuleLoader__.load({
             type: 'button',
             style: { ...styles.primary, ...(typeof clash === 'string' && clash !== '' ? { opacity: 0.5 } : null) },
             disabled: busy || (typeof clash === 'string' && clash !== ''),
+            // `title`, not Tip: this button sits inside the menu's scrolling
+            // body, so a floating bubble would be clipped by the same overflow
+            // that keeps the panel short. A native tooltip always fits.
+            title: saveTip,
             onClick: onSave,
-          }, saveTip === undefined
-            ? (saveLabel ?? '保存')
-            : h(Tip, { text: saveTip }, h('span', null, saveLabel ?? '保存')))))
+          }, saveLabel ?? '保存')))
     }
 
     // ---- the new-conversation picker ---------------------------------------
@@ -869,7 +876,12 @@ window.__ModuleLoader__.load({
       // null until this conversation has sent its first request.
       const contextTokens = Number(data?.context?.tokens) || 0
       const price = switchPrice(contextTokens, prices)
-      const priceTip = switchPriceTip(contextTokens, prices)
+      // One sentence for the bill, stated for every conversation size. The same
+      // text a tooltip used to carry per row — moved here because the rows are
+      // read at a glance and the reminder under them is what people act on.
+      const billSentence = contextTokens > 0
+        ? `本对话上下文（约 ${formatTokens(contextTokens)} tokens），下一条未命中价${switchCost(contextTokens, prices)}，之后恢复至缓存价。`
+        : '这个对话还没有发出第一条消息；切换后第一条消息会把整套工具定义按未命中价算一次，之后恢复至缓存价。'
 
       /**
        * This menu belongs to one conversation: it may switch that conversation
@@ -1029,16 +1041,17 @@ window.__ModuleLoader__.load({
         h(MenuRow, {
           label: '全部',
           tip: '不裁剪：Harness 自带工具和所有已启用插件的工具都能用。',
-          hint: rowHint(['不限制'], isAll),
-          hintTip: price === '' ? undefined : priceTip,
+          // Both base rows quote a price even while one of them is in use: they
+          // are the two "hand me everything / hand me nothing extra" choices,
+          // and leaving one blank made the pair look broken rather than free.
+          hint: rowHint(['不限制'], false),
           active: isAll,
           onClick: () => run({ action: 'applyBase', base: 'all' }),
         }),
         h(MenuRow, {
           label: '仅内置',
           tip: '只保留 Harness 自带的工具，下载插件的工具全部隐藏。',
-          hint: rowHint(['隐藏插件'], isDsh),
-          hintTip: price === '' ? undefined : priceTip,
+          hint: rowHint(['隐藏插件'], false),
           active: isDsh,
           onClick: () => run({ action: 'applyBase', base: 'dsh' }),
         }),
@@ -1075,7 +1088,6 @@ window.__ModuleLoader__.load({
               key: kit.name,
               label: kitLabel(kit),
               hint: rowHint([kit.isDefault ? '默认' : ''], false),
-              hintTip: price === '' ? undefined : priceTip,
               indent: true,
               onClick: () => {
                 run({ action: 'applyBase', base: 'kit', kit: kit.name })
@@ -1122,7 +1134,6 @@ window.__ModuleLoader__.load({
               key: preset.name,
               label: preset.title,
               hint: rowHint(['只读'], activePreset !== undefined && activePreset.name === preset.name),
-              hintTip: price === '' ? undefined : priceTip,
               active: activePreset !== undefined && activePreset.name === preset.name,
               indent: true,
               onClick: () => {
@@ -1134,9 +1145,13 @@ window.__ModuleLoader__.load({
         appliedBlock,
         h(GroupHead, {
           title: '加挂',
-          count: `${extras.length}/${freePlugins.length}`,
+          // "already in this conversation / plugins there are at all". For the
+          // left number that means the plugins the base brings plus the ones
+          // attached on top; under 全部 it is all of them, so it reads 6/6 and
+          // there is nothing left to add.
+          count: `${plugins.filter((plugin) => applied.includes(plugin.id) || extras.includes(plugin.id)).length}/${plugins.length}`,
           open: groups.extras,
-          tip: `在当前选择上临时加开插件，不新建套装。已经包含的插件不能再加。加开会改变插件清单，下一条要按未命中价重新计算一次${price === '' ? '' : `，${price}`}；之后恢复至缓存价。`,
+          tip: '在当前选择上临时加开插件，不新建套装。已经包含的插件不能再加。',
           onToggle: () => setGroups({ ...groups, extras: !groups.extras }),
           action: extras.length === 0
             ? null
@@ -1210,7 +1225,10 @@ window.__ModuleLoader__.load({
           h('div', null, FOOTER),
           h('div', { style: styles.warnLine },
             h('strong', { style: { fontWeight: 600 } }, '重要提醒：'),
-            FOOTER_WARN)),
+            FOOTER_WARN),
+          // The bill, in one place instead of under every row: the reminder
+          // above is the thing people read, and a tooltip has to be found.
+          h('div', { style: styles.billLine }, billSentence)),
         message === '' ? null : h('div', { style: styles.error }, message))
 
       const body = builder === null
@@ -1543,7 +1561,11 @@ window.__ModuleLoader__.load({
         // the most recently seen agent, so the ledger above is that conversation's.
         h('div', { style: styles.sectionTitle, marginTop: 14 }, '新对话默认套装'),
         h('div', { style: { ...styles.meta, marginBottom: 6 } },
-          '只影响之后新建的对话；单独对话请在标题栏「装备栏」切换；新建对话时也可选择对话套装。'),
+          // One clause per line: a wrapped sentence broke in the middle of
+          // 「切换」/「对话套装」 on narrow panels, which read like a typo.
+          h('div', null, '只影响之后新建的对话。'),
+          h('div', null, '单独对话请在标题栏「装备栏」切换。'),
+          h('div', null, '新建对话时也可选择对话套装。')),
         // 全部 and 仅内置 are choices, not kits, but they read like the kit cards
         // below (copy the switch command / make it the default) so the page has
         // one idiom instead of two.
