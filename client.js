@@ -304,9 +304,11 @@ window.__ModuleLoader__.load({
         background: 'rgba(37, 99, 235, 0.05)',
       },
       tag: { fontSize: 10, padding: '0 5px', borderRadius: 4, border: '1px solid currentColor', opacity: 0.7 },
-      // The new-conversation picker: one sentence, one collapsed select, and a
-      // list that only exists while it is open.
-      heroPick: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 },
+      // The new-conversation picker: one sentence and one collapsed select. The
+      // list is absolutely positioned, so opening it never reflows the page —
+      // a select that stretches the composer every time is worse than one that
+      // covers it for a moment.
+      heroPick: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 },
       heroPickHead: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
       heroPickLabel: { fontSize: 12, opacity: 0.72 },
       heroToggle: {
@@ -317,9 +319,11 @@ window.__ModuleLoader__.load({
       heroToggleOpen: { borderColor: '#3b82f6', color: '#2563eb' },
       heroToggleText: { fontWeight: 600 },
       heroPanel: {
+        position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 60,
         display: 'flex', flexDirection: 'column', gap: 2, padding: 6, borderRadius: 10,
         border: '1px solid var(--ds-border, #d8dbe0)', background: 'var(--ds-surface, #fff)',
-        boxShadow: '0 8px 24px rgba(0,0,0,.12)', minWidth: 260, maxWidth: 340, fontSize: 12,
+        boxShadow: '0 12px 32px rgba(0,0,0,.16)', width: 260, maxHeight: 320, overflowY: 'auto',
+        fontSize: 12,
       },
       heroNote: { fontSize: 11, opacity: 0.6 },
     }
@@ -592,6 +596,7 @@ window.__ModuleLoader__.load({
       // conversation start with", and the list is what you open to change it.
       const [open, setOpen] = useState(preview?.open === true)
       const [groups, setGroups] = useState(preview?.groups ?? { presets: false, kits: false })
+      const box = useRef(null)
       // `useSession` is a standard prop for session-scoped slots; a host that
       // does not hand it over still only renders this slot in the hero phase.
       const useSession = props.useSession
@@ -613,6 +618,26 @@ window.__ModuleLoader__.load({
         refresh()
       }, [refresh])
 
+      // The list floats over the composer instead of pushing it down: a select
+      // that resizes the page every time it opens is worse than a covered input.
+      useEffect(() => {
+        if (!open) return undefined
+        const away = (event) => {
+          if (box.current !== null && !box.current.contains(event.target)) setOpen(false)
+        }
+        document.addEventListener('mousedown', away)
+        return () => document.removeEventListener('mousedown', away)
+      }, [open])
+
+      // The name a pick shows: the kit's title, or the two base names — `@dsh`
+      // is this plugin's wire value for 仅内置 and must never surface as text.
+      const labelOf = (name) => {
+        if (name === '') return '全部'
+        if (name === DEFAULT_DSH) return '仅内置'
+        const found = [...(data?.kits ?? []), ...(data?.presets ?? [])].find((kit) => kit.name === name)
+        return found?.title ?? found?.name ?? name
+      }
+
       const pick = async (name) => {
         if (busy || typeof sessionId !== 'string' || sessionId === '') return
         setBusy(true)
@@ -620,8 +645,7 @@ window.__ModuleLoader__.load({
         try {
           setData(await request({ action: 'bind', sessionId, name }))
           setOpen(false)
-          const shown = name === '' ? '全部' : ([...(data?.kits ?? []), ...(data?.presets ?? [])].find((kit) => kit.name === name)?.title ?? name)
-          setMessage(`这个对话会用「${shown}」，下一条消息生效`)
+          setMessage(`这个对话会用「${labelOf(name)}」，下一条消息生效`)
         } catch (error) {
           setMessage(String(error?.message ?? error))
         } finally {
@@ -638,12 +662,6 @@ window.__ModuleLoader__.load({
       const current = data.bound === true
         ? (typeof data.binding === 'string' ? data.binding : '')
         : (typeof data.defaultKit === 'string' ? data.defaultKit : '')
-      const titleOf = (name) => {
-        if (name === '') return '全部'
-        if (name === DEFAULT_DSH) return '仅内置'
-        const found = [...kits, ...presets].find((kit) => kit.name === name)
-        return found?.title ?? found?.name ?? name
-      }
       const row = (name, label, tip) => h(MenuRow, {
         key: `pick-${name === '' ? 'all' : name}`,
         label,
@@ -662,7 +680,7 @@ window.__ModuleLoader__.load({
         onClick: () => pick(kit.name),
       })
 
-      return h('div', { style: styles.heroPick, 'data-loadout': 'hero-kit' },
+      return h('div', { ref: box, style: styles.heroPick, 'data-loadout': 'hero-kit' },
         h('div', { style: styles.heroPickHead },
           h('span', { style: styles.heroPickLabel }, '选择你的新对话套装'),
           h('button', {
@@ -672,7 +690,7 @@ window.__ModuleLoader__.load({
             title: '这个对话从第一条消息起用哪套工具',
             onClick: () => setOpen(!open),
           },
-          h('span', { style: styles.heroToggleText }, titleOf(current)),
+          h('span', { style: styles.heroToggleText }, labelOf(current)),
           h('span', { style: styles.caret }, open ? '▾' : '▸'))),
         open
           ? h('div', { style: styles.heroPanel },

@@ -396,6 +396,20 @@ try {
   check('folded groups still say how many they hold',
     openedText.includes('（5）') && openedText.includes('（2）'), openedText)
 
+  // Opening the list must not reflow the page: the panel floats, and the row it
+  // is anchored to is its positioning context.
+  check('the list floats instead of pushing the page',
+    nodesIn(opened, (node) => node.props?.style?.position === 'absolute' && node.props?.style?.maxHeight === 320).length >= 1,
+    JSON.stringify(nodesIn(opened, (node) => node.props?.style?.maxHeight)))
+  check('the picker anchors the floating list',
+    opened?.props?.style?.position === 'relative', JSON.stringify(opened?.props?.style))
+
+  // `@dsh` is the wire value for 仅内置; it must never be shown to the user, not
+  // in the list and not in the sentence that confirms a pick.
+  check('仅内置 is never printed as its wire value',
+    !openedText.includes('@dsh') && source.includes("if (name === DEFAULT_DSH) return '仅内置'"),
+    openedText)
+
   // A kit inside 我的套装 is selectable once that group is opened, and picking it
   // binds this conversation only.
   const binds = []
