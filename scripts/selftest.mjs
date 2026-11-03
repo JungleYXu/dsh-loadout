@@ -1048,6 +1048,38 @@ const clearedState = await getState('session-blank')
 check('the cleared pick reads back as 全部', clearedState.body?.bound === true && clearedState.body?.binding === '',
   JSON.stringify({ bound: clearedState.body?.bound, binding: clearedState.body?.binding }))
 
+// ---- a welcome-screen pick is a draft, not a decision ----------------------
+// Leaving the screen without sending anything must reset it, exactly like the
+// host resets its own mode; a completed turn promotes the draft for real.
+const draftBind = await post({ action: 'bind', sessionId: 'session-draft', name: 'pick-kit' })
+check('a welcome-screen pick is marked as a draft', draftBind.body?.draft === true, JSON.stringify(draftBind.body?.draft))
+const draftState = await getState('session-draft')
+check('the draft reads back on the same visit',
+  draftState.body?.draft === true && draftState.body?.binding === 'pick-kit',
+  JSON.stringify({ draft: draftState.body?.draft, binding: draftState.body?.binding }))
+
+const released = await post({ action: 'release', sessionId: 'session-draft' })
+check('leaving the welcome screen drops the draft',
+  released.body?.draft === false && released.body?.bound === false && released.body?.binding === '',
+  JSON.stringify({ draft: released.body?.draft, bound: released.body?.bound, binding: released.body?.binding }))
+const afterRelease = await getState('session-draft')
+check('the next visit starts at the default',
+  afterRelease.body?.draft !== true && afterRelease.body?.bound === false,
+  JSON.stringify({ draft: afterRelease.body?.draft, bound: afterRelease.body?.bound }))
+
+await post({ action: 'bind', sessionId: 'session-draft', name: 'pick-kit' })
+for (const handler of ctx.handlers.get('session/event') ?? []) handler({ id: 'session-draft' }, { type: 'turn/end' })
+const promoted = await getState('session-draft')
+check('a completed turn promotes the draft into a real binding',
+  promoted.body?.draft !== true && promoted.body?.binding === 'pick-kit',
+  JSON.stringify({ draft: promoted.body?.draft, binding: promoted.body?.binding }))
+
+await post({ action: 'bind', sessionId: 'session-draft-2', name: 'pick-kit' })
+for (const handler of ctx.handlers.get('session/disposed') ?? []) handler({ id: 'session-draft-2' })
+const disposed = await getState('session-draft-2')
+check('a disposed welcome screen takes its draft with it',
+  disposed.body?.draft !== true, JSON.stringify(disposed.body?.draft))
+
 // ---- report ----------------------------------------------------------------
 rmSync(scratch, { recursive: true, force: true })
 if (failures.length === 0) {

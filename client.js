@@ -591,6 +591,11 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = useState(preview?.open === true)
       const [groups, setGroups] = useState(preview?.groups ?? { presets: false, kits: false })
       const box = useRef(null)
+      // One visit, one first look: a draft left by an earlier visit is dropped
+      // before it is ever shown, so the screen starts where the host's own mode
+      // starts — at the default.
+      const firstLook = useRef(true)
+      const lastSession = useRef(sessionId)
       // `useSession` is a standard prop for session-scoped slots; a host that
       // does not hand it over still only renders this slot in the hero phase.
       const useSession = props.useSession
@@ -600,8 +605,21 @@ window.__ModuleLoader__.load({
 
       const refresh = useCallback(async () => {
         if (typeof sessionId !== 'string' || sessionId === '') return
+        // A different conversation in the same slot is a different visit.
+        if (lastSession.current !== sessionId) {
+          lastSession.current = sessionId
+          firstLook.current = true
+        }
         try {
-          setData(await load(sessionId))
+          let next = await load(sessionId)
+          // A draft pick left on this welcome screen by a previous visit is not a
+          // decision: ask the host to drop it before showing anything, so the
+          // user sees the same clean slate the host gives its own mode.
+          if (firstLook.current === true && next.draft === true && next.live !== true) {
+            next = await request({ action: 'release', sessionId })
+          }
+          firstLook.current = false
+          setData(next)
         } catch {
           // "No agent yet" is a normal answer for this route, not something to
           // paint red above the composer.

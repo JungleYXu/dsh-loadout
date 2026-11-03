@@ -377,6 +377,12 @@ try {
   check('the tooltip reads as a sentence about this conversation',
     tipButton[0]?.props?.title === '这个新对话会用「我的套」套装', String(tipButton[0]?.props?.title))
 
+  // A pick on an unsent screen is a draft: a later visit must start clean, so the
+  // first look asks the host to drop whatever a previous visit left behind.
+  check('a new visit releases the previous visit\'s draft',
+    source.includes("action: 'release'") && source.includes('next.draft === true'),
+    'the picker never releases a draft')
+
   // With no default set, the collapsed label is 全部.
   const noDefault = expand(hero.component({
     sessionId: 'session-new',

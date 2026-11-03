@@ -467,6 +467,18 @@ export function apply(ctx, config = {}) {
   const customKits = new Map()
 
   /**
+   * Kits picked on a conversation that has not started yet.
+   *
+   * Such a pick is a draft, not a decision: the user is still on the welcome
+   * screen, and leaving it without sending anything should look exactly like
+   * never having been there — the same way the host resets its own mode. The
+   * binding still goes into the store (that is what the agent reads when it
+   * appears), and this map records "this one is only a draft", so the next
+   * visit can release it or a completed turn can promote it for real.
+   */
+  const draftPicks = new Map()
+
+  /**
    * The host service that turns a Session id into its live agent.
    *
    * Cordis throws on `ctx.<service>` for a service the plugin never injected,
@@ -1242,6 +1254,24 @@ export function apply(ctx, config = {}) {
     const retry = setTimeout(() => ensureBindingApplied(agent), 100)
     if (typeof retry?.unref === 'function') retry.unref()
   })
+
+  try {
+    // A draft pick stops being a draft as soon as the conversation runs a turn:
+    // from then on it is this conversation's kit, like any explicit switch. A
+    // conversation that is disposed without ever running one takes its draft
+    // with it.
+    ctx.on('session/event', (session, event) => {
+      const id = session?.id
+      if (typeof id !== 'string') return
+      if (event?.type === 'turn/end') draftPicks.delete(id)
+    })
+    ctx.on('session/disposed', (session) => {
+      const id = session?.id
+      if (typeof id === 'string') draftPicks.delete(id)
+    })
+  } catch {
+    // An older host without these events still works; drafts just live longer.
+  }
 
   try {
     ctx.effect(() => () => {
@@ -2064,8 +2094,9 @@ export function apply(ctx, config = {}) {
             // and an unknown id still answer from the last agent seen.
             const sessionId = new URL(req.url ?? '', 'http://localhost').searchParams.get('sessionId') ?? ''
             const found = await agentForSession(sessionId)
-            if (found.ok) return sendJson(res, 200, { ok: true, ...snapshot(found.agent) })
+            if (found.ok) return sendJson(res, 200, { ok: true, live: true, ...snapshot(found.agent) })
             const view = snapshot()
+            view.live = false
             // A conversation that has not sent a message yet may have no agent; its
             // binding is still readable by Session id, which is what lets the
             // new-conversation picker show the kit this conversation will start with.
@@ -2074,6 +2105,9 @@ export function apply(ctx, config = {}) {
               // "Chose 全部" and "never chose" both read as an empty binding, and
               // they mean different kits to show in the picker.
               view.bound = bindingOf(sessionId) !== undefined
+              // `draft` says the pick was made on this still-unstarted screen, so
+              // the next visit should start clean instead of inheriting it.
+              view.draft = draftPicks.has(sessionId)
             }
             return sendJson(res, 200, { ok: true, ...view })
           }
@@ -2156,15 +2190,33 @@ export function apply(ctx, config = {}) {
                 return sendJson(res, 404, { ok: false, error: `没有套装「${value}」` })
               }
               book.assignments[sessionId] = value
+              // Remember that this was a welcome-screen pick, so the next visit
+              // can drop it again unless the conversation has actually started.
+              draftPicks.set(sessionId, value)
               save()
               // With an agent this applies right away; without one the reply still
               // carries the stored binding, which is all the picker needs to show.
               const bound = await agentForSession(sessionId)
-              if (!bound.ok) return sendJson(res, 200, { ok: true, ...snapshot(), binding: value ?? '', bound: true })
+              if (!bound.ok) return sendJson(res, 200, { ok: true, ...snapshot(), binding: value ?? '', bound: true, draft: true })
               rememberAgent(bound.agent)
               // `bound` tells the picker that an empty binding was a choice, not
               // the absence of one — the same distinction the GET branch makes.
-              return sendJson(res, 200, { ok: true, ...snapshot(bound.agent), bound: true })
+              return sendJson(res, 200, { ok: true, ...snapshot(bound.agent), bound: true, draft: true })
+            }
+            case 'release': {
+              // The user came back to a welcome screen carrying a draft pick from
+              // a previous visit. A draft that was never sent is not a decision:
+              // drop it so the screen looks untouched, exactly like the host
+              // resetting its own mode.
+              const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+              if (sessionId === '') return sendJson(res, 400, { ok: false, error: '缺少会话 id' })
+              if (!draftPicks.has(sessionId)) {
+                return sendJson(res, 200, { ok: true, ...snapshot(), binding: bindingOf(sessionId) ?? '', bound: bindingOf(sessionId) !== undefined, live: false })
+              }
+              draftPicks.delete(sessionId)
+              delete book.assignments[sessionId]
+              save()
+              return sendJson(res, 200, { ok: true, ...snapshot(), binding: '', bound: false, live: false, draft: false })
             }
             case 'create': operations.create(body); break
             case 'update': operations.update(body); break

@@ -127,6 +127,8 @@ This is the one switch that is genuinely free: there is no agent yet, so no requ
 
 The pick binds this conversation only; it does not change the default for new conversations — that still lives in Settings. On a host without this slot (an older DSH), the row simply does not appear and nothing else changes.
 
+A pick made before the first message is a **draft**: leave the screen without sending anything (switch to another conversation, reload the page) and it is discarded, so the next new conversation starts at the default again — the same reset the host applies to its own mode. Once a message has actually run, the kit becomes this conversation's fixed binding.
+
 ## Files
 
 - Kit data: `~/.dsh/loadout.json` (schema-versioned; the older `~/.dsh/plugin-kits.json` is read once, then left behind).
