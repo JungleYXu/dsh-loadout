@@ -121,7 +121,7 @@ If you do not want to pay it now, click **`下次对话`** at the end of the row
 
 ## Picking a kit for a new conversation
 
-Above the composer of a blank conversation there is a "工具套装" row: one button for `全部`, one for each of your kits, and one for each of the five presets. Click one and this conversation starts with that kit from its first message. The row leaves with the welcome area at the first send.
+A blank conversation's welcome area carries the line "选择你的新对话套装: <current pick> ▸". Opening it shows a folded list — `全部`, `仅内置`, `预设套装`, `我的套装` — where the two kit groups start collapsed and list their entries only when opened. The collapsed label is the answer to "which kit will this conversation actually use": the default kit when one is set, otherwise `全部`. The pick takes effect from the first message, and the line leaves with the welcome area at the first send.
 
 This is the one switch that is genuinely free: there is no agent yet, so no request prefix exists and the tool definitions cannot invalidate anything. Picking here is cheaper than switching after the first message.
 

@@ -365,45 +365,65 @@ if (pricedMenu !== undefined) {
 // This is the one place a switch is free: the agent does not exist yet, so no
 // request prefix has been built and nothing can be re-billed.
 try {
-  const picker = expand(hero.component({ sessionId: 'session-new', preview: { blank: true, data: fixture } }))
-  const chips = nodesIn(picker, (node) => node.props?.type === 'button')
-  const labels = chips.map((node) => textOf(node))
-  check('the picker offers 全部 plus every kit and preset',
-    labels[0] === '全部' && labels.includes('我的套') && labels.includes('另一套') && labels.includes('写作'),
-    JSON.stringify(labels))
+  // Collapsed, the picker answers the question without a list.
+  const collapsed = expand(hero.component({ sessionId: 'session-new', preview: { blank: true, data: fixture } }))
+  const collapsedText = textOf(collapsed)
+  check('the picker asks the question in words', collapsedText.includes('选择你的新对话套装'), collapsedText)
+  check('collapsed, it names the kit this conversation will start with',
+    collapsedText.includes('我的套') && !collapsedText.includes('仅内置'), collapsedText)
 
-  // Nothing chosen yet: the kit that will actually start this conversation is
-  // the default one, so that is the chip that reads as on.
-  const lit = chips.filter((node) => node.props?.style?.color === '#2563eb').map((node) => textOf(node))
-  check('an untouched conversation shows the default kit as the pick',
-    lit.length === 1 && lit[0] === '我的套', JSON.stringify(lit))
+  // With no default set, the collapsed label is 全部.
+  const noDefault = expand(hero.component({
+    sessionId: 'session-new',
+    preview: { blank: true, data: { ...fixture, defaultKit: '' } },
+  }))
+  const noDefaultText = textOf(noDefault)
+  check('with no default, the collapsed label is 全部',
+    noDefaultText.includes('全部') && !noDefaultText.includes('我的套'), noDefaultText)
+  check('the collapsed control is a real button',
+    nodesIn(noDefault, (node) => node.props?.['aria-expanded'] === 'false').length === 1,
+    noDefaultText)
 
-  // "Chose 全部" and "never chose" look the same in the data; `bound` tells them
-  // apart so the picker does not claim 全部 over a real default.
-  const all = expand(hero.component({ sessionId: 'session-new', preview: { blank: true, data: { ...fixture, bound: true, binding: '' } } }))
-  const allLit = nodesIn(all, (node) => node.props?.type === 'button' && node.props?.style?.color === '#2563eb').map((node) => textOf(node))
-  check('a conversation that chose 全部 shows 全部 as the pick',
-    allLit.length === 1 && allLit[0] === '全部', JSON.stringify(allLit))
+  // Opened: 全部 / 仅内置 / the two groups, groups still folded.
+  const opened = expand(hero.component({
+    sessionId: 'session-new',
+    preview: { blank: true, data: fixture, open: true },
+  }))
+  const openedText = textOf(opened)
+  check('opened, it lists 全部 and 仅内置', openedText.includes('全部') && openedText.includes('仅内置'), openedText)
+  check('opened, it groups presets and my kits', openedText.includes('预设套装') && openedText.includes('我的套装'), openedText)
+  check('both kit groups start folded', !openedText.includes('写作') && !openedText.includes('另一套'), openedText)
+  check('folded groups still say how many they hold',
+    openedText.includes('（5）') && openedText.includes('（2）'), openedText)
 
-  const bound = expand(hero.component({ sessionId: 'session-new', preview: { blank: true, data: { ...fixture, bound: true, binding: 'other' } } }))
-  const boundLit = nodesIn(bound, (node) => node.props?.type === 'button' && node.props?.style?.color === '#2563eb').map((node) => textOf(node))
-  check('a conversation that chose a kit shows that kit as the pick',
-    boundLit.length === 1 && boundLit[0] === '另一套', JSON.stringify(boundLit))
-
-  // Picking must only bind this conversation: no base/apply, and no session-wide
-  // default, which would change every future conversation too.
+  // A kit inside 我的套装 is selectable once that group is opened, and picking it
+  // binds this conversation only.
   const binds = []
   fetchImpl = (url, init) => {
     binds.push({ url, body: JSON.parse(String(init?.body ?? '{}')) })
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...fixture, bound: true, binding: 'other' }) })
   }
-  chips.find((node) => textOf(node) === '另一套')?.props?.onClick?.()
+  const kitsOpen = expand(hero.component({
+    sessionId: 'session-new',
+    preview: { blank: true, data: fixture, open: true, groups: { presets: false, kits: true } },
+  }))
+  const kitRows = nodesIn(kitsOpen, (node) => node.props?.role === 'menuitem')
+  const otherRow = kitRows.find((node) => textOf(node).includes('另一套'))
+  check('my kits open to their rows', otherRow !== undefined, JSON.stringify(kitRows.map(textOf)))
+  otherRow?.props?.onClick?.()
   check('picking a kit binds this conversation only',
     binds.length === 1 && binds[0]?.body?.action === 'bind' && binds[0]?.body?.sessionId === 'session-new' && binds[0]?.body?.name === 'other',
     JSON.stringify(binds))
   check('picking a kit leaves the default alone',
     binds[0]?.body?.base === undefined && binds[0]?.body?.apply === undefined && binds[0]?.body?.default === undefined,
     JSON.stringify(binds[0]?.body))
+
+  // A bound conversation shows its own pick, not the default.
+  const bound = expand(hero.component({
+    sessionId: 'session-new',
+    preview: { blank: true, data: { ...fixture, bound: true, binding: 'other' } },
+  }))
+  check('a bound conversation names its own kit', textOf(bound).includes('另一套'), textOf(bound))
 
   // Once the conversation has a message the hero is gone, and so is the picker.
   check('the picker leaves with the hero', hero.component({ sessionId: 'session-new', preview: { blank: false, data: fixture } }) === null)

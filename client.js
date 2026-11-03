@@ -86,6 +86,9 @@ window.__ModuleLoader__.load({
       return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`
     }
 
+    /** The one binding value that is not a kit: "Harness built-ins only". */
+    const DEFAULT_DSH = '@dsh'
+
     // The cost of a switch is quoted at provider list prices, in ¥ per million
     // tokens. It is a setting, not a constant: prices move, and a wrong number
     // here can only make an estimate wrong — it never changes what a switch does.
@@ -301,9 +304,23 @@ window.__ModuleLoader__.load({
         background: 'rgba(37, 99, 235, 0.05)',
       },
       tag: { fontSize: 10, padding: '0 5px', borderRadius: 4, border: '1px solid currentColor', opacity: 0.7 },
-      // The new-conversation picker: a label and an inline row of chips.
-      heroPick: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
-      heroPickLabel: { fontSize: 11, opacity: 0.55 },
+      // The new-conversation picker: one sentence, one collapsed select, and a
+      // list that only exists while it is open.
+      heroPick: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 },
+      heroPickHead: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+      heroPickLabel: { fontSize: 12, opacity: 0.72 },
+      heroToggle: {
+        display: 'inline-flex', alignItems: 'center', gap: 6, height: 26, padding: '0 10px',
+        border: '1px solid var(--ds-border, #d8dbe0)', borderRadius: 8, background: 'transparent',
+        color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+      },
+      heroToggleOpen: { borderColor: '#3b82f6', color: '#2563eb' },
+      heroToggleText: { fontWeight: 600 },
+      heroPanel: {
+        display: 'flex', flexDirection: 'column', gap: 2, padding: 6, borderRadius: 10,
+        border: '1px solid var(--ds-border, #d8dbe0)', background: 'var(--ds-surface, #fff)',
+        boxShadow: '0 8px 24px rgba(0,0,0,.12)', minWidth: 260, maxWidth: 340, fontSize: 12,
+      },
       heroNote: { fontSize: 11, opacity: 0.6 },
     }
 
@@ -571,6 +588,10 @@ window.__ModuleLoader__.load({
       const [data, setData] = useState(preview?.data ?? null)
       const [busy, setBusy] = useState(false)
       const [message, setMessage] = useState('')
+      // Collapsed by default: the picker answers "which kit will this
+      // conversation start with", and the list is what you open to change it.
+      const [open, setOpen] = useState(preview?.open === true)
+      const [groups, setGroups] = useState(preview?.groups ?? { presets: false, kits: false })
       // `useSession` is a standard prop for session-scoped slots; a host that
       // does not hand it over still only renders this slot in the hero phase.
       const useSession = props.useSession
@@ -598,6 +619,7 @@ window.__ModuleLoader__.load({
         setMessage('')
         try {
           setData(await request({ action: 'bind', sessionId, name }))
+          setOpen(false)
           const shown = name === '' ? '全部' : ([...(data?.kits ?? []), ...(data?.presets ?? [])].find((kit) => kit.name === name)?.title ?? name)
           setMessage(`这个对话会用「${shown}」，下一条消息生效`)
         } catch (error) {
@@ -608,30 +630,71 @@ window.__ModuleLoader__.load({
       }
 
       if (!blank || data === null || typeof sessionId !== 'string' || sessionId === '') return null
-      const kits = [...(data.kits ?? []), ...(data.presets ?? [])]
+      const kits = data.kits ?? []
+      const presets = data.presets ?? []
       // `bound` separates "this conversation chose 全部" from "nothing chosen
       // yet": without it, a fresh conversation would claim 全部 even when the
       // default kit is what will actually start it.
       const current = data.bound === true
         ? (typeof data.binding === 'string' ? data.binding : '')
         : (typeof data.defaultKit === 'string' ? data.defaultKit : '')
+      const titleOf = (name) => {
+        if (name === '') return '全部'
+        if (name === DEFAULT_DSH) return '仅内置'
+        const found = [...kits, ...presets].find((kit) => kit.name === name)
+        return found?.title ?? found?.name ?? name
+      }
+      const row = (name, label, tip) => h(MenuRow, {
+        key: `pick-${name === '' ? 'all' : name}`,
+        label,
+        tip,
+        active: current === name,
+        indent: true,
+        disabled: busy,
+        onClick: () => pick(name),
+      })
+      const kitRow = (kit) => h(MenuRow, {
+        key: `pick-${kit.name}`,
+        label: kitLabel(kit),
+        active: current === kit.name,
+        indent: true,
+        disabled: busy,
+        onClick: () => pick(kit.name),
+      })
 
       return h('div', { style: styles.heroPick, 'data-loadout': 'hero-kit' },
-        h('span', { style: styles.heroPickLabel }, '工具套装'),
-        h('button', {
-          type: 'button',
-          style: { ...styles.tool, ...(current === '' ? styles.toolOn : null) },
-          disabled: busy,
-          onClick: () => pick(''),
-        }, '全部'),
-        kits.map((kit) => h('button', {
-          key: kit.name,
-          type: 'button',
-          title: kitLabel(kit),
-          style: { ...styles.tool, ...(kit.name === current ? styles.toolOn : null) },
-          disabled: busy,
-          onClick: () => pick(kit.name),
-        }, kit.title ?? kit.name)),
+        h('div', { style: styles.heroPickHead },
+          h('span', { style: styles.heroPickLabel }, '选择你的新对话套装'),
+          h('button', {
+            type: 'button',
+            style: { ...styles.heroToggle, ...(open ? styles.heroToggleOpen : null) },
+            'aria-expanded': open ? 'true' : 'false',
+            title: '这个对话从第一条消息起用哪套工具',
+            onClick: () => setOpen(!open),
+          },
+          h('span', { style: styles.heroToggleText }, titleOf(current)),
+          h('span', { style: styles.caret }, open ? '▾' : '▸'))),
+        open
+          ? h('div', { style: styles.heroPanel },
+            row('', '全部', '不裁剪：Harness 自带工具和所有已启用插件的工具都能用。'),
+            row(DEFAULT_DSH, '仅内置', '只保留 Harness 自带的工具，下载插件的工具全部隐藏。'),
+            h(GroupHead, {
+              title: '预设套装',
+              count: presets.length,
+              open: groups.presets,
+              tip: '出厂自带的只读套装，点一下即可套用。',
+              onToggle: () => setGroups({ ...groups, presets: !groups.presets }),
+            }),
+            groups.presets === true ? presets.map(kitRow) : null,
+            h(GroupHead, {
+              title: '我的套装',
+              count: kits.length,
+              open: groups.kits,
+              tip: '你自己保存的套装，点一下即可套用。',
+              onToggle: () => setGroups({ ...groups, kits: !groups.kits }),
+            }),
+            groups.kits === true ? kits.map(kitRow) : null)
+          : null,
         message === '' ? null : h('span', { style: styles.heroNote }, message),
       )
     }
