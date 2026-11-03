@@ -45,7 +45,7 @@ const React = {
 
 const registrations = []
 let injections = 0
-const SLOTS = ['settings.section', 'conversation.session.header.actions', 'conversation.hero.options']
+const SLOTS = ['settings.section', 'conversation.session.header.actions', 'conversation.input.left']
 
 const slots = {
   inject(name, callback) {
@@ -102,7 +102,7 @@ check('three surfaces registered', registrations.length === 3, String(registrati
 
 const registration = registrations.find((entry) => entry.definition?.name === 'settings.section')
 const header = registrations.find((entry) => entry.definition?.name === 'conversation.session.header.actions')
-const hero = registrations.find((entry) => entry.definition?.name === 'conversation.hero.options')
+const hero = registrations.find((entry) => entry.definition?.name === 'conversation.input.left')
 check('settings panel registered', registration !== undefined)
 check('header chip registered', header !== undefined)
 check('new-conversation picker registered', hero !== undefined)
@@ -361,16 +361,21 @@ if (pricedMenu !== undefined) {
   check('a short conversation does not advertise its size', !shortText.includes('上下文'), shortText.slice(0, 300))
 }
 
-// ---- the blank-conversation picker -----------------------------------------
+// ---- the blank-conversation picker (composer row, next to 标准模式) ----------
 // This is the one place a switch is free: the agent does not exist yet, so no
 // request prefix has been built and nothing can be re-billed.
 try {
-  // Collapsed, the picker answers the question without a list.
+  // Collapsed, the chip names the kit and keeps the sentence for the tooltip:
+  // the composer row is shared with 权限/计划 and has no room for prose.
   const collapsed = expand(hero.component({ sessionId: 'session-new', preview: { blank: true, data: fixture } }))
   const collapsedText = textOf(collapsed)
-  check('the picker asks the question in words', collapsedText.includes('选择你的新对话套装'), collapsedText)
-  check('collapsed, it names the kit this conversation will start with',
-    collapsedText.includes('我的套') && !collapsedText.includes('仅内置'), collapsedText)
+  check('the chip names the kit this conversation will start with',
+    collapsedText.includes('套装') && collapsedText.includes('我的套'), collapsedText)
+  check('the sentence is not printed on the row', !collapsedText.includes('选择你的新对话套装'), collapsedText)
+  const tipButton = nodesIn(collapsed, (node) => typeof node.props?.title === 'string' && node.props.title.includes('选择你的新对话套装'))
+  check('the sentence rides on the chip as its tooltip', tipButton.length === 1, JSON.stringify(nodesIn(collapsed, (node) => node.props?.title)))
+  check('the tooltip says which kit will be used',
+    String(tipButton[0]?.props?.title ?? '').includes('我的套'), String(tipButton[0]?.props?.title))
 
   // With no default set, the collapsed label is 全部.
   const noDefault = expand(hero.component({
@@ -378,7 +383,7 @@ try {
     preview: { blank: true, data: { ...fixture, defaultKit: '' } },
   }))
   const noDefaultText = textOf(noDefault)
-  check('with no default, the collapsed label is 全部',
+  check('with no default, the chip says 全部',
     noDefaultText.includes('全部') && !noDefaultText.includes('我的套'), noDefaultText)
   check('the collapsed control is a real button',
     nodesIn(noDefault, (node) => node.props?.['aria-expanded'] === 'false').length === 1,
@@ -396,12 +401,13 @@ try {
   check('folded groups still say how many they hold',
     openedText.includes('（5）') && openedText.includes('（2）'), openedText)
 
-  // Opening the list must not reflow the page: the panel floats, and the row it
-  // is anchored to is its positioning context.
+  // Opening the list must not reflow the page, and it opens upward: the composer
+  // row sits at the bottom of the window.
+  const panel = nodesIn(opened, (node) => node.props?.style?.maxHeight === 320)
   check('the list floats instead of pushing the page',
-    nodesIn(opened, (node) => node.props?.style?.position === 'absolute' && node.props?.style?.maxHeight === 320).length >= 1,
-    JSON.stringify(nodesIn(opened, (node) => node.props?.style?.maxHeight)))
-  check('the picker anchors the floating list',
+    panel.length === 1 && panel[0]?.props?.style?.position === 'absolute', JSON.stringify(panel.map((node) => node.props.style)))
+  check('the list opens upward', String(panel[0]?.props?.style?.bottom ?? '').includes('100%'), JSON.stringify(panel[0]?.props?.style))
+  check('the chip anchors the floating list',
     opened?.props?.style?.position === 'relative', JSON.stringify(opened?.props?.style))
 
   // `@dsh` is the wire value for 仅内置; it must never be shown to the user, not
@@ -561,7 +567,7 @@ check('apply survives a missing slot', applyError === undefined, String(applyErr
 check('the remaining surfaces still register',
   keptRegistrations.length === 2
     && keptRegistrations.some((entry) => entry.name === 'settings.section')
-    && keptRegistrations.some((entry) => entry.name === 'conversation.hero.options'),
+    && keptRegistrations.some((entry) => entry.name === 'conversation.input.left'),
   JSON.stringify(keptRegistrations.map((entry) => entry.name)))
 
 if (failures.length === 0) {

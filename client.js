@@ -304,28 +304,19 @@ window.__ModuleLoader__.load({
         background: 'rgba(37, 99, 235, 0.05)',
       },
       tag: { fontSize: 10, padding: '0 5px', borderRadius: 4, border: '1px solid currentColor', opacity: 0.7 },
-      // The new-conversation picker: one sentence and one collapsed select. The
-      // list is absolutely positioned, so opening it never reflows the page —
-      // a select that stretches the composer every time is worse than one that
-      // covers it for a moment.
-      heroPick: { position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 },
-      heroPickHead: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-      heroPickLabel: { fontSize: 12, opacity: 0.72 },
-      heroToggle: {
-        display: 'inline-flex', alignItems: 'center', gap: 6, height: 26, padding: '0 10px',
-        border: '1px solid var(--ds-border, #d8dbe0)', borderRadius: 8, background: 'transparent',
-        color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
-      },
-      heroToggleOpen: { borderColor: '#3b82f6', color: '#2563eb' },
-      heroToggleText: { fontWeight: 600 },
-      heroPanel: {
-        position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 60,
+      // The new-conversation picker, sitting in the composer's tool row next to
+      // 权限/计划. It is one compact chip; the list floats above the row (below
+      // is the window edge), and opening it never reflows the page.
+      pickWrap: { position: 'relative', display: 'inline-flex', alignItems: 'center' },
+      chipMuted: { opacity: 0.55 },
+      chipStrong: { fontWeight: 600 },
+      pickPanel: {
+        position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 60,
         display: 'flex', flexDirection: 'column', gap: 2, padding: 6, borderRadius: 10,
         border: '1px solid var(--ds-border, #d8dbe0)', background: 'var(--ds-surface, #fff)',
         boxShadow: '0 12px 32px rgba(0,0,0,.16)', width: 260, maxHeight: 320, overflowY: 'auto',
         fontSize: 12,
       },
-      heroNote: { fontSize: 11, opacity: 0.6 },
     }
 
     // ---- small pieces -------------------------------------------------------
@@ -680,20 +671,26 @@ window.__ModuleLoader__.load({
         onClick: () => pick(kit.name),
       })
 
-      return h('div', { ref: box, style: styles.heroPick, 'data-loadout': 'hero-kit' },
-        h('div', { style: styles.heroPickHead },
-          h('span', { style: styles.heroPickLabel }, '选择你的新对话套装'),
-          h('button', {
-            type: 'button',
-            style: { ...styles.heroToggle, ...(open ? styles.heroToggleOpen : null) },
-            'aria-expanded': open ? 'true' : 'false',
-            title: '这个对话从第一条消息起用哪套工具',
-            onClick: () => setOpen(!open),
-          },
-          h('span', { style: styles.heroToggleText }, labelOf(current)),
-          h('span', { style: styles.caret }, open ? '▾' : '▸'))),
+      // The sentence lives on hover, not on the row: this line is shared with the
+      // permission and plan chips, so the control itself only says 套装 + name.
+      const tipText = message !== ''
+        ? `选择你的新对话套装：${message}`
+        : `选择你的新对话套装：这个对话会用「${labelOf(current)}」`
+
+      return h('span', { ref: box, style: styles.pickWrap, 'data-loadout': 'kit-pick' },
+        h('button', {
+          type: 'button',
+          style: { ...styles.chip, ...(open ? styles.chipActive : null) },
+          'aria-expanded': open ? 'true' : 'false',
+          'aria-label': tipText,
+          title: tipText,
+          onClick: () => setOpen(!open),
+        },
+        h('span', { style: styles.chipMuted }, '套装'),
+        h('span', { style: styles.chipStrong }, labelOf(current)),
+        h('span', { style: styles.caret }, open ? '▾' : '▸')),
         open
-          ? h('div', { style: styles.heroPanel },
+          ? h('div', { style: styles.pickPanel },
             row('', '全部', '不裁剪：Harness 自带工具和所有已启用插件的工具都能用。'),
             row(DEFAULT_DSH, '仅内置', '只保留 Harness 自带的工具，下载插件的工具全部隐藏。'),
             h(GroupHead, {
@@ -713,7 +710,6 @@ window.__ModuleLoader__.load({
             }),
             groups.kits === true ? kits.map(kitRow) : null)
           : null,
-        message === '' ? null : h('span', { style: styles.heroNote }, message),
       )
     }
 
@@ -1750,16 +1746,15 @@ window.__ModuleLoader__.load({
           extra: { inject: (sessionId) => ({ sessionId }) },
         }, HeaderMenu)
         // The new-conversation picker: the one moment where switching is free,
-        // because the agent — and its first request — does not exist yet. It
-        // lives in the hero row beside the workspace and agent-preset chips, and
-        // unmounts at the first send, which is exactly when the choice stops
-        // being free.
+        // because the agent — and its first request — does not exist yet. It sits
+        // in the composer's tool row (next to 权限/计划, i.e. beside 标准模式),
+        // which is mounted in both phases — so it gates itself on `blank`.
         registerSurface(ctx, {
-          name: 'conversation.hero.options',
-          order: 10,
+          name: 'conversation.input.left',
+          order: 5,
           // Session-scoped slots get their Session id through `inject`; without
           // it the picker could neither read this conversation's binding nor
-          // write one (the entry only renders when a Session exists).
+          // write one.
           extra: { inject: (sessionId) => ({ sessionId }) },
         }, HeroKit)
         // The settings page: the full editor and the place kits are stored from.
