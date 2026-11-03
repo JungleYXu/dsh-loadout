@@ -184,7 +184,7 @@ function expand(node) {
 }
 
 // ---- the rendered menu (seeded through the documented `preview` test seam) --
-const FOOTER = '装备栏只决定「这个对话能用哪些工具」：切换后下一条消息即按新清单组装，随时可以切回「全部」；新对话则从「设置 → 装备栏」的默认套装开始。它作用于工具（tool）这一层——界面面板、宿主服务类插件不注册工具，因此不受影响。'
+const FOOTER = '装备栏只决定「这个对话能用哪些工具」：切换后下一条消息即按新清单组装，随时可以切回「全部」；装备栏作用于工具（tool）这一层——界面面板、宿主服务类插件不注册工具，因此不受影响。'
 const fixture = {
   ok: true,
   source: 'C:/fake/.dsh/loadout.json',
@@ -261,8 +261,13 @@ if (menu !== undefined) {
   // Presets are back from 0.12: they are the quickest way to start a known kind
   // of work, they stay read-only, and each one now says what it leaves out.
   check('menu lists the presets again', allText.includes('预设套装（5）') && allText.includes('写作') && allText.includes('仅聊天'), allText.slice(0, 400))
-  check('加挂 counts extras', allText.includes('加挂（1）'), allText.slice(0, 400))
+  // 加挂 reads as "attached / attachable": the second number is what is still
+  // missing from the current selection, so the group answers "how much room is
+  // left" without opening it.
+  check('加挂 counts attached of attachable', allText.includes('加挂（1/1）'), allText.slice(0, 400))
   check('footer text is the approved sentence', allText.includes(FOOTER))
+  check('footer carries the before-you-start reminder',
+    allText.includes('重要提醒') && allText.includes('建议新建对话时直接选择合适套装'), allText.slice(-600))
   check('the menu shows the note with the kit name', allText.includes('我的套（用于视频制作）'), allText.slice(0, 400))
   check('the save panel can be cancelled', source.includes("setSaveNote('')"), 'the 取消 button does not reset the save panel')
 
@@ -307,6 +312,16 @@ if (menu !== undefined) {
   const kitsOpenText = textOf(kitsOpen)
   check('我的套装 expands to the other kits', kitsOpenText.includes('另一套'), kitsOpenText.slice(0, 400))
   check('新建套装 is offered under 我的套装', kitsOpenText.includes('＋ 新建套装'), kitsOpenText.slice(0, 400))
+
+  // Saving a kit and starting to use it are two decisions. The menu offers both,
+  // and only the second one can change what this conversation's tools are.
+  check('the builder offers save without switching',
+    source.includes("onSaveKeep: () => saveBuilder('keep')"), 'no 保存 button next to 保存并启用')
+  check('the builder labels the switching button', source.includes("saveLabel: '保存并启用'"))
+  check('the switching button warns it rewrites the tools',
+    source.includes('保存后立刻切换到这个套装'), '保存并启用 has no hover text')
+  const keepBranch = source.slice(source.indexOf("if (mode === 'keep')"), source.indexOf('const appliedKit'))
+  check('save-only leaves the current selection alone', keepBranch.includes('return'), keepBranch.slice(0, 200))
 }
 
 // ---- the price of a switch, next to the switch ------------------------------
@@ -330,6 +345,18 @@ if (pricedMenu !== undefined) {
   check('an inactive kit quotes one switch', pricedText.includes('≈¥0.30'), pricedText.slice(0, 900))
   const activePriced = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' && textOf(node).includes('我的套'))
   check('the kit already in use quotes no price', !textOf(activePriced[0]).includes('≈¥'), textOf(activePriced[0]))
+
+  // 全部 and 仅内置 are one click away from a full re-bill too, so they carry the
+  // same number as the kits do.
+  const allRow = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' && textOf(node).trim().startsWith('全部'))
+  check('全部 quotes the same one-switch price', allRow.length === 1 && textOf(allRow[0]).includes('≈¥0.30'), JSON.stringify(allRow.map(textOf)))
+
+  // The sentence belongs to the whole row: the hint is four glyphs wide, and a
+  // tooltip hidden behind it is a tooltip nobody finds.
+  const pricedRows = nodesIn(pricedMenu, (node) => node.props?.role === 'menuitem' &&
+    typeof node.props?.title === 'string' && node.props.title.includes('按未命中价重新计算一次'))
+  check('a switching row explains itself on hover', pricedRows.length >= 2, JSON.stringify(pricedRows.map(textOf)))
+  check('the row tooltip names the context it would re-bill', pricedRows[0]?.props?.title.includes('约 200k tokens'), String(pricedRows[0]?.props?.title))
 
   // What new conversations start from is a global decision and belongs to
   // 设置 → 装备栏. This menu is scoped to one conversation, so it must not grow
@@ -507,6 +534,16 @@ try {
   check('kit cards show their own estimate', panelText.includes('≈860 tokens') && panelText.includes('≈420 tokens'), panelText.slice(0, 400))
   const deleteButtons = nodesIn(panel, (node) => node.type === 'button' && textOf(node) === '删除')
   check('only my kits can be deleted', deleteButtons.length === 2, `${deleteButtons.length} · 删除@${panelText.indexOf('删除')} · ${panelText.slice(0, 200)}`)
+
+  // A page that edits defaults has no business quoting what a switch would cost
+  // *this* conversation — that number belongs to the conversation's own menu.
+  check('settings does not price a switch', !panelText.includes('切换一次大概多贵') && !panelText.includes('未命中 ¥/百万'), panelText.slice(0, 600))
+  check('settings explains the numbers are the last live conversation\'s',
+    panelText.includes('设置页不绑定具体会话，上面的数字来自最近活跃的那个对话'), panelText.slice(0, 300))
+  check('settings says where a single conversation is switched',
+    panelText.includes('单独对话请在标题栏「装备栏」切换'), panelText.slice(0, 300))
+  check('settings names the other two places a kit can be chosen',
+    panelText.includes('新建对话时也可选择对话套装'), panelText.slice(0, 300))
 
   // Presets start collapsed, and while collapsed they behave like 我的套装: the
   // one that is the default stays visible so the page still answers "a new

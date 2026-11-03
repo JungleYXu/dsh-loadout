@@ -35,8 +35,9 @@ window.__ModuleLoader__.load({
     /** This plugin's own tools never belong inside a kit. */
     const OWN_TOOLS = ['kit_list', 'kit_apply', 'kit_create', 'kit_set_tools', 'kit_set_default', 'kit_delete']
 
-    /** The exact sentence the spec fixes for the panel footer. */
-    const FOOTER = '装备栏只决定「这个对话能用哪些工具」：切换后下一条消息即按新清单组装，随时可以切回「全部」；新对话则从「设置 → 装备栏」的默认套装开始。它作用于工具（tool）这一层——界面面板、宿主服务类插件不注册工具，因此不受影响。'
+    /** The panel footer: what this menu does, then the one thing worth acting on. */
+    const FOOTER = '装备栏只决定「这个对话能用哪些工具」：切换后下一条消息即按新清单组装，随时可以切回「全部」；装备栏作用于工具（tool）这一层——界面面板、宿主服务类插件不注册工具，因此不受影响。'
+    const FOOTER_WARN = '建议新建对话时直接选择合适套装！对话中途切换套装会改变插件清单，下一条对话要按未命中价重新计算一次，之后恢复至缓存价。长对话影响较大，短对话基本无影响；空闲对话、刚压缩的对话、重启后再切换无影响。'
 
     /** A kit's one-line reminder; keep in step with NOTE_MAX in index.js. */
     const NOTE_MAX = 20
@@ -140,7 +141,7 @@ window.__ModuleLoader__.load({
     function switchPriceTip(tokens, prices) {
       const n = Math.round(Number(tokens) || 0)
       const price = switchPrice(n, prices)
-      return `切换会重写工具定义，这段上下文（约 ${formatTokens(n)} tokens）要按未命中价重新算一次${price === '' ? '' : `，${price}`}；之后每轮又回到缓存价。`
+      return `切换会改变插件清单，此对话上下文（约 ${formatTokens(n)} tokens），下一条要按未命中价重新计算一次${price === '' ? '' : `，${price}`}；之后恢复至缓存价。`
     }
 
     // Every mutation fans out to the other panel. The chip and the settings page
@@ -252,6 +253,9 @@ window.__ModuleLoader__.load({
         fontSize: 11, opacity: 0.62, marginTop: 8, lineHeight: 1.6,
         borderTop: '1px solid var(--ds-border, #e5e7eb)', paddingTop: 6,
       },
+      // The one paragraph in the panel that asks for a decision before the
+      // first message, so it is not dimmed with the rest of the footer.
+      warnLine: { marginTop: 6, color: '#b45309', opacity: 0.95, lineHeight: 1.6 },
       error: { fontSize: 11, color: '#dc2626', marginTop: 6, lineHeight: 1.5 },
       notice: { fontSize: 11, color: '#2563eb', marginTop: 6, lineHeight: 1.5 },
       input: {
@@ -389,6 +393,10 @@ window.__ModuleLoader__.load({
         role: 'menuitem',
         tabIndex: disabled ? undefined : 0,
         'aria-disabled': disabled ? 'true' : 'false',
+        // The price explains the whole row, not just the number at its end: the
+        // hint is four glyphs wide, and a tooltip you have to find with the
+        // pointer is a tooltip nobody reads.
+        title: props.hintTip,
         style,
         onMouseEnter: () => setHover(true),
         onMouseLeave: () => setHover(false),
@@ -407,9 +415,7 @@ window.__ModuleLoader__.load({
           : h(Tip, { text: props.tip }, h('span', null, props.label))),
       h('span', { style: { flex: 1 } }),
       props.hint === undefined || props.hint === '' ? null : (
-        props.hintTip === undefined
-          ? h('span', { style: styles.meta }, props.hint)
-          : h(Tip, { text: props.hintTip }, h('span', { style: styles.meta }, props.hint))
+        h('span', { style: styles.meta }, props.hint)
       ))
     }
 
@@ -448,6 +454,7 @@ window.__ModuleLoader__.load({
       const {
         catalog, draft, onChange, busy, onCancel, onSave, saveLabel,
         title, onSaveAs, saveAsLabel, nameField, namePlaceholder, clash,
+        onSaveKeep, saveKeepLabel, saveTip,
       } = props
       // Both lists start collapsed: the builder opens with a name field and a
       // summary, not with forty checkboxes.
@@ -529,12 +536,19 @@ window.__ModuleLoader__.load({
           onSaveAs === undefined
             ? null
             : h('button', { type: 'button', style: styles.ghost, disabled: busy, onClick: onSaveAs }, saveAsLabel ?? '另存为新套装'),
+          // Saving and using are two decisions. The menu may do both, so it
+          // offers both; the settings page only ever saves a kit for later.
+          onSaveKeep === undefined
+            ? null
+            : h('button', { type: 'button', style: styles.ghost, disabled: busy, onClick: onSaveKeep }, saveKeepLabel ?? '保存'),
           h('button', {
             type: 'button',
             style: { ...styles.primary, ...(typeof clash === 'string' && clash !== '' ? { opacity: 0.5 } : null) },
             disabled: busy || (typeof clash === 'string' && clash !== ''),
             onClick: onSave,
-          }, saveLabel ?? '保存')))
+          }, saveTip === undefined
+            ? (saveLabel ?? '保存')
+            : h(Tip, { text: saveTip }, h('span', null, saveLabel ?? '保存')))))
     }
 
     // ---- the new-conversation picker ---------------------------------------
@@ -894,7 +908,7 @@ window.__ModuleLoader__.load({
         setSaveAs(false)
       }
 
-      const saveBuilder = async () => {
+      const saveBuilder = async (mode) => {
         if (builder === null) return
         const kitName = builder.name.trim()
         if (kitName === '') {
@@ -916,8 +930,14 @@ window.__ModuleLoader__.load({
             plugins: builder.plugins,
           })
           setData(created)
-          const appliedKit = await run({ action: 'applyBase', base: 'kit', kit: kitName })
           setBuilder(null)
+          if (mode === 'keep') {
+            // Saving is not switching: the kit is now on the list, and this
+            // conversation keeps the tools it already paid for.
+            setMessage(`已保存「${kitName}」。要在这个对话用它，点标题栏的「装备栏」。`)
+            return
+          }
+          const appliedKit = await run({ action: 'applyBase', base: 'kit', kit: kitName })
           if (appliedKit !== null) setMessage(`已保存并启用「${kitName}」`)
         } catch (error) {
           setMessage(String(error.message ?? error))
@@ -1009,14 +1029,16 @@ window.__ModuleLoader__.load({
         h(MenuRow, {
           label: '全部',
           tip: '不裁剪：Harness 自带工具和所有已启用插件的工具都能用。',
-          hint: '不限制',
+          hint: rowHint(['不限制'], isAll),
+          hintTip: price === '' ? undefined : priceTip,
           active: isAll,
           onClick: () => run({ action: 'applyBase', base: 'all' }),
         }),
         h(MenuRow, {
           label: '仅内置',
           tip: '只保留 Harness 自带的工具，下载插件的工具全部隐藏。',
-          hint: '隐藏插件',
+          hint: rowHint(['隐藏插件'], isDsh),
+          hintTip: price === '' ? undefined : priceTip,
           active: isDsh,
           onClick: () => run({ action: 'applyBase', base: 'dsh' }),
         }),
@@ -1112,9 +1134,9 @@ window.__ModuleLoader__.load({
         appliedBlock,
         h(GroupHead, {
           title: '加挂',
-          count: extras.length,
+          count: `${extras.length}/${freePlugins.length}`,
           open: groups.extras,
-          tip: '在当前选择之上临时加开插件，不新建套装。已经包含的插件不能再加；加挂同样会改写工具定义，下一条消息要按未命中重新算一次。',
+          tip: `在当前选择上临时加开插件，不新建套装。已经包含的插件不能再加。加开会改变插件清单，下一条要按未命中价重新计算一次${price === '' ? '' : `，${price}`}；之后恢复至缓存价。`,
           onToggle: () => setGroups({ ...groups, extras: !groups.extras }),
           action: extras.length === 0
             ? null
@@ -1184,7 +1206,11 @@ window.__ModuleLoader__.load({
                   : null)
               : null)
           : null,
-        h('div', { style: styles.footer }, FOOTER),
+        h('div', { style: styles.footer },
+          h('div', null, FOOTER),
+          h('div', { style: styles.warnLine },
+            h('strong', { style: { fontWeight: 600 } }, '重要提醒：'),
+            FOOTER_WARN)),
         message === '' ? null : h('div', { style: styles.error }, message))
 
       const body = builder === null
@@ -1195,8 +1221,10 @@ window.__ModuleLoader__.load({
           onChange: (next) => { setBuilder(next); setMessage('') },
           busy,
           onCancel: () => setBuilder(null),
-          onSave: saveBuilder,
+          onSave: () => saveBuilder('apply'),
+          onSaveKeep: () => saveBuilder('keep'),
           saveLabel: '保存并启用',
+          saveTip: '保存后立刻切换到这个套装：工具清单会变，这个对话下一条消息要按未命中价重新计算一次。',
           clash: nameClash(builder.name, presets, kits, null),
         })
 
@@ -1310,8 +1338,6 @@ window.__ModuleLoader__.load({
       // a new conversation start with", and a list of five kits does not answer it.
       // The test seam can seed it open so the card assertions never depend on a click.
       const [openSections, setOpenSections] = useState(preview?.openSections ?? { presets: false, kits: false })
-      // Prices are a browser-local preference: nothing on the host reads them.
-      const [prices, setPrices] = useState(readPrices)
 
       const refresh = useCallback(async () => {
         try {
@@ -1373,46 +1399,6 @@ window.__ModuleLoader__.load({
       // the chip does.
       const defaultKitRow = kits.find((kit) => kit.name === data.defaultKit)
       const defaultPresetRow = presets.find((preset) => preset.name === data.defaultKit)
-
-      // Prices only feed the chip's estimate, so they live in this browser
-      // rather than in the profile store: nothing on the host reads them, and a
-      // wrong number here can never change what a switch does.
-      const contextTokens = Number(data.context?.tokens) || 0
-      const price = switchPrice(contextTokens, prices)
-      const updatePrices = (patch) => {
-        const next = { ...prices, ...patch }
-        setPrices(next)
-        writePrices(next)
-        // The chip is a separate tree: tell it, the same way a kit change does.
-        announce()
-      }
-      const priceField = (key, label) => h('label', {
-        key,
-        style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, opacity: 0.8 },
-      },
-      h('span', null, label),
-      h('input', {
-        type: 'number',
-        min: 0,
-        step: 0.05,
-        style: styles.priceInput,
-        'aria-label': label,
-        value: String(prices[key]),
-        onChange: (event) => {
-          const parsed = Number(event.target.value)
-          updatePrices({ [key]: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0 })
-        },
-      }))
-      const priceSection = h('div', { key: 'pricing', style: styles.section },
-        h('div', { style: styles.sectionTitle }, '切换一次大概多贵'),
-        h('div', { style: { display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' } },
-          priceField('miss', '未命中 ¥/百万'),
-          priceField('hit', '命中 ¥/百万')),
-        h('div', { style: styles.hint },
-          contextTokens >= PRICE_MIN_TOKENS
-            ? `这段对话约 ${formatTokens(contextTokens)} tokens：现在切换一次，约 ${price === '' ? '不到一分钱' : price}。`
-            : '这段对话还很短，切换几乎不花钱；上下文过 20k 之后标题栏才会显示估算。',
-          ' 价格只用于估算，不影响切换本身。'))
 
       const saveDraft = async () => {
         if (draft === null) return
@@ -1510,6 +1496,11 @@ window.__ModuleLoader__.load({
       }
 
       return h('div', { style: { padding: '4px 2px', fontSize: 12 } },
+        // This page edits defaults, not a conversation: saying so up front is
+        // cheaper than explaining why the numbers below never change while the
+        // user is only renaming a kit.
+        h('div', { style: { ...styles.meta, marginBottom: 8, lineHeight: 1.6 } },
+          '设置页不绑定具体会话，上面的数字来自最近活跃的那个对话。'),
         h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
           h('button', { type: 'button', style: styles.ghost, disabled: busy, onClick: refresh }, '刷新'),
           h('button', {
@@ -1549,13 +1540,10 @@ window.__ModuleLoader__.load({
               '（估算：按工具定义长度 ÷ 3.5 字符/token）',
             ].join('　·　')),
         // This panel has no Session of its own: the host answers a bare GET from
-        // the most recently seen agent. Saying so is cheaper than explaining why
-        // the numbers "don't change" when the user is only editing a default.
-        h('div', { style: { ...styles.meta, marginTop: 4 } },
-          '设置页不绑定具体会话，上面的数字来自最近活跃的那个对话；当前对话请在标题栏「装备栏」里切换。'),
+        // the most recently seen agent, so the ledger above is that conversation's.
         h('div', { style: styles.sectionTitle, marginTop: 14 }, '新对话默认套装'),
         h('div', { style: { ...styles.meta, marginBottom: 6 } },
-          '只影响之后新建的对话；已经开着的对话各自保留自己的选择，这里改不到它们。'),
+          '只影响之后新建的对话；单独对话请在标题栏「装备栏」切换；新建对话时也可选择对话套装。'),
         // 全部 and 仅内置 are choices, not kits, but they read like the kit cards
         // below (copy the switch command / make it the default) so the page has
         // one idiom instead of two.
@@ -1693,7 +1681,6 @@ window.__ModuleLoader__.load({
                     }))
                   : null,
               ]))),
-        priceSection,
         h('div', { style: styles.footer }, `存储：${data.source ?? '(未知)'}　新对话默认：${
           data.defaultKit === '' ? '(未设置)' : data.defaultKit === '@dsh' ? '仅内置' : data.defaultKit}`),
         h('div', { style: { ...styles.hint, marginTop: 4, lineHeight: 1.6 } },

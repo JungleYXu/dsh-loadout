@@ -65,7 +65,7 @@ node scripts/client-smoke.mjs # browser bundle: menu and settings panel render
 - **Settings → Loadout**: manage kits, edit notes, choose the new-conversation default.
 - `/kit <name>`: switch from the message box.
 
-Settings has no conversation of its own, so it only decides *where new conversations start* — use the header button to change the current one. In the default list, `All` / `Built-in only` and kits are the same kind of card: each can copy its switch command or be set as default. **My kits** starts collapsed and shows only the current default, with the same ＋ New kit action right under it; open it to see the rest. A saved kit can be **edited** on its card: the form opens under that card, and you either overwrite it (conversations already using it switch immediately) or save as a new kit.
+Settings has no conversation of its own, so it only decides *where new conversations start* — the page says so at the top ("设置页不绑定具体会话，上面的数字来自最近活跃的那个对话。"): the token ledger describes the most recently active conversation, and the default kit only affects conversations created after the change. Use the header menu to switch a single conversation, and the new-conversation pill to pick a kit for one that has not started yet. In the default list, `All` / `Built-in only` and kits are the same kind of card: each can copy its switch command or be set as default. **My kits** starts collapsed and shows only the current default, with the same ＋ New kit action right under it; open it to see the rest. A saved kit can be **edited** on its card: the form opens under that card, and you either overwrite it (conversations already using it switch immediately) or save as a new kit.
 
 ### Shipped presets (five, read-only)
 Five read-only presets. Editing one forks it into one of your kits.
@@ -115,7 +115,13 @@ Switching is not free. The request prefix is ordered system prompt → tool defi
 - Switch mid-conversation at 150k tokens: roughly one full-context miss (¥0.2 on this machine), paid back slowly by the ~1.9k saved per turn.
 - After a long idle gap, a restart, or a compaction: the cache is cold anyway, so a switch there is nearly free.
 
-The menu quotes `≈¥0.2x` on every kit that is not in use, and the status line carries `· context ~150k`; below 20k neither is shown, because at that size the money is noise. The number comes from the host token meter's `contextPressure` projection (the provider-reported size of the last request plus whatever the surface has grown by since), not from guessing at the session file. Prices default to ¥2 / ¥0.5 per million tokens (miss / hit) and are editable under "切换一次大概多贵" in Settings; a wrong price can only make the estimate wrong.
+The menu quotes `≈¥0.2x` on every kit that is not in use — and on the `全部` / `仅内置` rows, since those switch tools too — and the status line carries `· context ~150k`; below 20k neither is shown, because at that size the money is noise. Hovering anywhere on the row explains where the number comes from ("切换会改变插件清单，此对话上下文（约 150k tokens），下一条要按未命中价重新计算一次，≈¥0.23；之后恢复至缓存价。"). The number comes from the host token meter's `contextPressure` projection (the provider-reported size of the last request plus whatever the surface has grown by since), not from guessing at the session file. The ¥2 / ¥0.5 per million tokens (miss / hit) are fixed estimates: they only feed the hint, and no setting changes what a switch does.
+
+The `加挂` group counts `attached / still attachable` (e.g. `加挂（1/5）`), and its header tooltip says that attaching plugins rewrites the tool list just the same, so the next message is billed once more.
+
+The last line of the conversation menu's footer is the one that matters most: **pick the right kit when you start a conversation**. Switching mid-conversation changes the tool list and the next message is billed at the miss price once, then back to the cached price. Costly on long conversations, negligible on short ones — and essentially free after an idle gap, a compaction, or a restart.
+
+Configuring is not the same as using: in the conversation menu, "＋ 新建套装" offers **保存** (store it, keep the current tools) and **保存并启用** (store it and switch to it — the hover text says the next message is billed once at the miss price). "保存" in Settings only ever saves.
 
 If you do not want to pay it now, do not switch here: choosing the default kit is not a conversation-level action. It lives in Settings → 装备栏 (the "设为默认" button on each card), and it only changes what *new* conversations start from — this conversation keeps its kit and its cache.
 
